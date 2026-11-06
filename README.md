@@ -8,7 +8,8 @@ no way to lose: just play.
 teddy bear, bunny ears and a flower hat. Walk up to one and you wear it right away. The
 game remembers your hat for next time.
 
-**Make the kid yours**: open the menu and tap **Karakter** to type a name, pick boy or
+**Make the kid yours**: the first time the game opens it goes straight to the
+**Karakter** page; later, open the menu and tap **Karakter**. Type a name, pick boy or
 girl, change skin and shirt colours, pick a hair style and colour, put on a hijab, and
 choose a face (Senyum, Gembira, Terkejut, Ngantuk, Kedip, and more). The look is saved
 on the phone and is still there next time.

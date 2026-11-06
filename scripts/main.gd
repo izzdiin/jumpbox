@@ -131,6 +131,9 @@ func _ready() -> void:
 	menu.profile_changed.connect(_on_profile_changed)
 	menu.set_profile(_player.profile_dict())
 	menu.set_net_status("Tidak terhubung. Main sendiri.")
+	# First run on a real device: make your character before anything else.
+	if _player.player_name == "" and not OS.has_feature("editor"):
+		menu.open_onboarding()
 	var cfg := ConfigFile.new()
 	if cfg.load(SETTINGS_PATH) == OK:
 		var last_ip := str(cfg.get_value("net", "last_ip", ""))
@@ -610,6 +613,7 @@ func _end_session(message: String) -> void:
 	_net_active = false
 	_is_host = false
 	_player.peer_id = 0
+	_menu.set_in_session(false)
 	_menu.set_net_status(message)
 	print("NET: session ended (", message, ")")
 
@@ -681,6 +685,7 @@ func _despawn_puppet(id: int) -> void:
 
 
 func _update_net_status() -> void:
+	_menu.set_in_session(_net_active)
 	if not _net_active:
 		return
 	var count := _puppets.size() + 1
