@@ -11,6 +11,8 @@ Personal use: keep it simple, keep development fast.
 - Light on the phone: few nodes, simple materials, no heavy shaders or real-time shadows.
   Only one place is loaded at a time, and a course is built the first time you enter it.
 - No internet, no ads, no downloaded assets. Sounds come from `tools/make_sounds.py`.
+  (This fork adds local WLAN multiplayer: phones on the same WiFi talk straight to
+  each other. Still no internet.)
 
 ## Commands
 

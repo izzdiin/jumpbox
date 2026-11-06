@@ -22,6 +22,10 @@ const COURSES := {
 
 const SPAWN := Vector3(0, 0.1, 15)
 const HALF_SIZE := 38.0
+## WLAN multiplayer: one phone hosts on this port, the others join by its address.
+const NET_PORT := 8899
+const MAX_PEERS := 4
+const SETTINGS_PATH := "user://settings.cfg"
 
 const GRASS := Color(0.42, 0.78, 0.35)
 const SAND := Color(0.96, 0.86, 0.6)
@@ -44,6 +48,10 @@ var _courses := {}
 ## The course you are on, or null in the park.
 var _active: Node
 var _icons: Array[Node3D] = []
+## WLAN session state. _puppets holds the other players, by peer id.
+var _net_active := false
+var _is_host := false
+var _puppets := {}
 
 
 func _ready() -> void:
@@ -95,9 +103,30 @@ func _ready() -> void:
 		ui.release_all()
 		menu.open())
 
+	menu.host_pressed.connect(net_host)
+	menu.join_pressed.connect(net_join)
+	menu.leave_pressed.connect(net_disconnect)
+	menu.profile_changed.connect(_on_profile_changed)
+	menu.set_profile(_player.profile_dict())
+	menu.set_net_status("Tidak terhubung. Main sendiri.")
+	var cfg := ConfigFile.new()
+	if cfg.load(SETTINGS_PATH) == OK:
+		var last_ip := str(cfg.get_value("net", "last_ip", ""))
+		if last_ip != "":
+			menu.set_join_ip(last_ip)
+	multiplayer.peer_connected.connect(_on_peer_connected)
+	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
+	multiplayer.connected_to_server.connect(_on_connected_to_server)
+	multiplayer.connection_failed.connect(_on_connection_failed)
+	multiplayer.server_disconnected.connect(_on_server_disconnected)
+
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--shot="):
 			_take_screenshot(arg.trim_prefix("--shot="))
+		elif arg == "--net-host":
+			call_deferred("net_host")
+		elif arg.begins_with("--net-join="):
+			call_deferred("net_join", arg.trim_prefix("--net-join="))
 
 
 func _enter_course(course_name: String) -> void:
@@ -165,6 +194,8 @@ func _build_hat_stands() -> void:
 		area.body_entered.connect(func(body: Node3D):
 			if body == _player and _player.hat != hat_name:
 				_player.set_hat(hat_name)
+				if _net_active:
+					_player.rpc("_receive_profile", _player.profile_dict())
 				_sound.play("sit")
 				U.confetti(self, pos + Vector3(0, 1.0, 0), 30, RAINBOW), CONNECT_DEFERRED)
 
@@ -469,3 +500,150 @@ func _build_clouds() -> void:
 		for j in 3:
 			U.mesh_box(cloud, Vector3(rng.randf_range(4, 7), 1.6, rng.randf_range(3, 4)), Vector3(j * 2.5 - 2.5, rng.randf_range(0, 0.8), 0), WHITE)
 		_clouds.append(cloud)
+
+
+## --- WLAN multiplayer -------------------------------------------------------
+## One phone hosts the game, the others join by its WLAN address. Only the
+## players are shared: every phone still runs its own park and courses, so a
+## friend shows up as a puppet that mirrors what its owner does (player.gd).
+
+func net_host() -> void:
+	if _net_active:
+		return
+	var peer := ENetMultiplayerPeer.new()
+	if peer.create_server(NET_PORT, MAX_PEERS - 1) != OK:
+		_menu.set_net_status("Gagal membuat sesi. Coba lagi.")
+		return
+	multiplayer.multiplayer_peer = peer
+	_net_active = true
+	_is_host = true
+	_player.peer_id = 1
+	_player.name = "Player1"
+	print("NET: hosting on port ", NET_PORT)
+	_update_net_status()
+
+
+func net_join(ip: String) -> void:
+	if _net_active:
+		return
+	ip = ip.strip_edges()
+	if ip == "":
+		_menu.set_net_status("Isi dulu alamat IP tuan rumah.")
+		return
+	var peer := ENetMultiplayerPeer.new()
+	if peer.create_client(ip, NET_PORT) != OK:
+		_menu.set_net_status("Alamat IP tidak valid.")
+		return
+	multiplayer.multiplayer_peer = peer
+	_net_active = true
+	_is_host = false
+	var cfg := ConfigFile.new()
+	cfg.load(SETTINGS_PATH)
+	cfg.set_value("net", "last_ip", ip)
+	cfg.save(SETTINGS_PATH)
+	_menu.set_net_status("Menghubungkan ke " + ip + " ...")
+	print("NET: joining ", ip)
+
+
+func net_disconnect() -> void:
+	_end_session("Kamu main sendiri sekarang.")
+
+
+func _end_session(message: String) -> void:
+	for id in _puppets:
+		_puppets[id].queue_free()
+	_puppets.clear()
+	if multiplayer.multiplayer_peer:
+		multiplayer.multiplayer_peer.close()
+		multiplayer.multiplayer_peer = null
+	_net_active = false
+	_is_host = false
+	_player.peer_id = 0
+	_menu.set_net_status(message)
+	print("NET: session ended (", message, ")")
+
+
+func _on_peer_connected(id: int) -> void:
+	print("NET: peer connected ", id)
+	if not _net_active:
+		return
+	_spawn_puppet(id)
+	_send_profile_to(id)
+	_update_net_status()
+	# The other phone may not have this puppet yet when the first profile
+	# arrives, so send it once more a moment later.
+	get_tree().create_timer(0.6).timeout.connect(func():
+		if _net_active and _puppets.has(id):
+			_send_profile_to(id))
+
+
+func _on_peer_disconnected(id: int) -> void:
+	print("NET: peer left ", id)
+	_despawn_puppet(id)
+	if _net_active:
+		_update_net_status()
+
+
+func _on_connected_to_server() -> void:
+	_player.peer_id = multiplayer.get_unique_id()
+	_player.name = "Player" + str(_player.peer_id)
+	print("NET: connected as peer ", _player.peer_id)
+	_update_net_status()
+
+
+func _on_connection_failed() -> void:
+	_end_session("Tidak bisa terhubung. Cek WiFi dan alamat IP-nya.")
+
+
+func _on_server_disconnected() -> void:
+	_end_session("Tuan rumah keluar. Sesi berakhir.")
+
+
+func _on_profile_changed(d: Dictionary) -> void:
+	_player.apply_profile(d, true)
+	if _net_active:
+		_player.rpc("_receive_profile", _player.profile_dict())
+
+
+func _send_profile_to(id: int) -> void:
+	_player.rpc_id(id, "_receive_profile", _player.profile_dict())
+
+
+func _spawn_puppet(id: int) -> void:
+	if _puppets.has(id) or id == multiplayer.get_unique_id():
+		return
+	var puppet := PlayerScript.new()
+	puppet.is_remote = true
+	puppet.peer_id = id
+	puppet.name = "Player" + str(id)
+	puppet.respawn_point = SPAWN
+	puppet.position = SPAWN
+	add_child(puppet)
+	_puppets[id] = puppet
+	print("NET: puppet for peer ", id, " spawned")
+
+
+func _despawn_puppet(id: int) -> void:
+	if _puppets.has(id):
+		_puppets[id].queue_free()
+		_puppets.erase(id)
+
+
+func _update_net_status() -> void:
+	if not _net_active:
+		return
+	var count := _puppets.size() + 1
+	if _is_host:
+		_menu.set_net_status("Tuan rumah aktif. Pemain: %d dari %d.\nAlamat HP ini: %s\nDi HP lain buka menu Main Berdua, isi alamat itu, lalu Gabung." % [count, MAX_PEERS, _local_ip_text()])
+	else:
+		_menu.set_net_status("Terhubung ke tuan rumah. Pemain: %d. Selamat main bareng!" % count)
+
+
+func _local_ip_text() -> String:
+	var found: Array[String] = []
+	for ip in IP.get_local_addresses():
+		if ip.begins_with("192.168.") or ip.begins_with("10.") or ip.begins_with("172."):
+			found.append(ip)
+	if found.is_empty():
+		return "(tidak ketemu, cek WiFi)"
+	return ", ".join(found)

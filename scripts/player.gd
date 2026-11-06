@@ -22,6 +22,29 @@ const SKIN := Color(1.0, 0.8, 0.25)
 const SHIRT := Color(0.95, 0.3, 0.3)
 const PANTS := Color(0.2, 0.45, 0.9)
 
+## Choices shown on the character page of the menu.
+const SKIN_TONES: Array[Color] = [
+	Color(1.0, 0.8, 0.25), Color(1.0, 0.87, 0.66), Color(0.98, 0.76, 0.52),
+	Color(0.85, 0.6, 0.4), Color(0.62, 0.42, 0.28), Color(0.4, 0.27, 0.18),
+]
+const SHIRT_COLORS: Array[Color] = [
+	Color(0.95, 0.3, 0.3), Color(1.0, 0.6, 0.15), Color(1.0, 0.85, 0.2), Color(0.4, 0.8, 0.3),
+	Color(0.25, 0.65, 0.95), Color(0.55, 0.4, 0.9), Color(0.95, 0.45, 0.75),
+	Color(0.97, 0.97, 0.97), Color(0.25, 0.25, 0.3),
+]
+const HAIR_COLORS: Array[Color] = [
+	Color(0.12, 0.09, 0.07), Color(0.35, 0.2, 0.1), Color(0.9, 0.7, 0.3),
+	Color(0.8, 0.3, 0.1), Color(0.25, 0.5, 0.95), Color(0.95, 0.5, 0.75),
+]
+const HIJAB_COLORS: Array[Color] = [
+	Color(0.95, 0.5, 0.7), Color(0.6, 0.45, 0.9), Color(0.35, 0.6, 0.95), Color(0.2, 0.75, 0.7),
+	Color(1.0, 0.85, 0.3), Color(0.97, 0.97, 0.97), Color(0.9, 0.35, 0.35),
+]
+const HAIR_STYLES := ["Botak", "Pendek", "Jabrik", "Panjang"]
+const FACE_STYLES := ["Senyum", "Gembira", "Biasa", "Terkejut", "Ngantuk", "Kedip"]
+## How often the owner of a player sends its place to the other phones (seconds).
+const NET_SEND_EVERY := 0.05
+
 ## The touch UI (touch_ui.gd). Set by main.gd.
 var ui: Node
 ## The sound player (sound.gd). Set by main.gd.
@@ -70,6 +93,31 @@ var _cam_rig: Node3D
 var _cam_pitch_node: Node3D
 var _shadow: MeshInstance3D
 
+## --- Character profile: picked on the menu's character page, saved, and shared
+## with the other players in a WLAN game so everyone looks different.
+var player_name := ""
+var gender := "boy"  # "boy" or "girl"
+var skin_color := SKIN
+var shirt_color := SHIRT
+var hair_style := 1  # index into HAIR_STYLES
+var hair_color := Color(0.12, 0.09, 0.07)
+var face_style := 0  # index into FACE_STYLES
+var wear_hijab := false
+var hijab_color := Color(0.95, 0.5, 0.7)
+
+## --- WLAN multiplayer. peer_id is 0 while playing alone. A player with
+## is_remote set is a puppet: no input, no camera, no physics of its own; the
+## phone of the kid playing it sends where it is (see _receive_state).
+var peer_id := 0
+var is_remote := false
+var _name_label: Label3D
+var _net_timer := 0.0
+var _net_pos := Vector3.ZERO
+var _net_yaw := 0.0
+var _net_speed := 0.0
+var _net_state := 0
+var _net_started := false
+
 
 func _ready() -> void:
 	var capsule := CapsuleShape3D.new()
@@ -82,12 +130,21 @@ func _ready() -> void:
 	collision_mask = 1 | NET_LAYER
 	floor_max_angle = deg_to_rad(50)
 	floor_snap_length = 0.3
+	if is_remote:
+		# A puppet never bumps into anything and nothing bumps into it: the
+		# owning phone just tells it where to stand.
+		collision_layer = 0
+		collision_mask = 0
 	_build_model()
-	_build_camera()
+	_build_name_label()
+	if not is_remote:
+		_build_camera()
 	_build_shadow()
-	var cfg := ConfigFile.new()
-	if cfg.load(SETTINGS_PATH) == OK:
-		set_hat(cfg.get_value("player", "hat", ""), false)
+	if not is_remote:
+		var cfg := ConfigFile.new()
+		if cfg.load(SETTINGS_PATH) == OK:
+			_load_profile(cfg)
+			set_hat(cfg.get_value("player", "hat", ""), false)
 
 
 func set_hat(hat_name: String, save := true) -> void:
@@ -104,6 +161,98 @@ func set_hat(hat_name: String, save := true) -> void:
 		cfg.load(SETTINGS_PATH)
 		cfg.set_value("player", "hat", hat_name)
 		cfg.save(SETTINGS_PATH)
+
+
+## The whole look as one dictionary: saved on this phone and sent to the other
+## phones in a WLAN game (Colors travel as Colors, they are a built-in type).
+func profile_dict() -> Dictionary:
+	return {
+		"name": player_name, "gender": gender,
+		"skin": skin_color, "shirt": shirt_color,
+		"hair_style": hair_style, "hair_color": hair_color, "face": face_style,
+		"hijab": wear_hijab, "hijab_color": hijab_color, "hat": hat,
+	}
+
+
+func apply_profile(d: Dictionary, save := false) -> void:
+	player_name = str(d.get("name", player_name)).left(16)
+	gender = str(d.get("gender", gender))
+	skin_color = d.get("skin", skin_color)
+	shirt_color = d.get("shirt", shirt_color)
+	hair_style = clampi(int(d.get("hair_style", hair_style)), 0, HAIR_STYLES.size() - 1)
+	hair_color = d.get("hair_color", hair_color)
+	face_style = clampi(int(d.get("face", face_style)), 0, FACE_STYLES.size() - 1)
+	wear_hijab = bool(d.get("hijab", wear_hijab))
+	hijab_color = d.get("hijab_color", hijab_color)
+	refresh_appearance()
+	set_hat(str(d.get("hat", hat)), false)
+	if save:
+		_save_profile()
+
+
+## Rebuild the blocky kid with the current profile colors, hair and hijab.
+func refresh_appearance() -> void:
+	if _model:
+		_model.queue_free()
+	_legs.clear()
+	_arms.clear()
+	_build_model()
+	var worn := hat
+	hat = ""
+	set_hat(worn, false)
+	_update_name_label()
+
+
+func _save_profile() -> void:
+	var cfg := ConfigFile.new()
+	cfg.load(SETTINGS_PATH)
+	cfg.set_value("profile", "name", player_name)
+	cfg.set_value("profile", "gender", gender)
+	cfg.set_value("profile", "skin", skin_color.to_html())
+	cfg.set_value("profile", "shirt", shirt_color.to_html())
+	cfg.set_value("profile", "hair_style", hair_style)
+	cfg.set_value("profile", "hair_color", hair_color.to_html())
+	cfg.set_value("profile", "face", face_style)
+	cfg.set_value("profile", "hijab", wear_hijab)
+	cfg.set_value("profile", "hijab_color", hijab_color.to_html())
+	cfg.save(SETTINGS_PATH)
+
+
+func _load_profile(cfg: ConfigFile) -> void:
+	var d := {
+		"name": cfg.get_value("profile", "name", player_name),
+		"gender": cfg.get_value("profile", "gender", gender),
+		"skin": Color.html(cfg.get_value("profile", "skin", skin_color.to_html())),
+		"shirt": Color.html(cfg.get_value("profile", "shirt", shirt_color.to_html())),
+		"hair_style": cfg.get_value("profile", "hair_style", hair_style),
+		"hair_color": Color.html(cfg.get_value("profile", "hair_color", hair_color.to_html())),
+		"face": cfg.get_value("profile", "face", face_style),
+		"hijab": cfg.get_value("profile", "hijab", wear_hijab),
+		"hijab_color": Color.html(cfg.get_value("profile", "hijab_color", hijab_color.to_html())),
+		"hat": hat,
+	}
+	apply_profile(d)
+
+
+func _build_name_label() -> void:
+	_name_label = Label3D.new()
+	_name_label.position = Vector3(0, 2.45, 0)
+	_name_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_name_label.font_size = 128
+	_name_label.pixel_size = 0.006
+	_name_label.modulate = Color.WHITE
+	_name_label.outline_size = 24
+	_name_label.outline_modulate = Color(0.1, 0.1, 0.15, 0.9)
+	add_child(_name_label)
+	_update_name_label()
+
+
+## Only the other players wear a name tag; your own would hang in the camera.
+func _update_name_label() -> void:
+	if _name_label == null:
+		return
+	_name_label.text = player_name
+	_name_label.visible = is_remote and player_name != ""
 
 
 func respawn(sound_name := "home") -> void:
@@ -152,17 +301,86 @@ func _build_model() -> void:
 		var arm := Node3D.new()
 		arm.position = Vector3(0.43 * side, 1.32, 0)
 		_model.add_child(arm)
-		U.mesh_box(arm, Vector3(0.22, 0.62, 0.26), Vector3(0, -0.28, 0), SKIN)
+		U.mesh_box(arm, Vector3(0.22, 0.62, 0.26), Vector3(0, -0.28, 0), skin_color)
 		_arms.append(arm)
-	U.mesh_box(_model, Vector3(0.62, 0.62, 0.36), Vector3(0, 1.06, 0), SHIRT)
-	var head := U.mesh_box(_model, Vector3(0.5, 0.5, 0.5), Vector3(0, 1.64, 0), SKIN)
+	U.mesh_box(_model, Vector3(0.62, 0.62, 0.36), Vector3(0, 1.06, 0), shirt_color)
+	var head := U.mesh_box(_model, Vector3(0.5, 0.5, 0.5), Vector3(0, 1.64, 0), skin_color)
 	# Face looks toward -Z, which is "forward" in Godot.
-	U.mesh_box(head, Vector3(0.08, 0.12, 0.02), Vector3(-0.11, 0.05, -0.255), Color.BLACK)
-	U.mesh_box(head, Vector3(0.08, 0.12, 0.02), Vector3(0.11, 0.05, -0.255), Color.BLACK)
-	U.mesh_box(head, Vector3(0.22, 0.05, 0.02), Vector3(0, -0.11, -0.255), Color(0.5, 0.1, 0.1))
+	_build_face(head)
+	_build_hair(head)
 	_hat_root = Node3D.new()
 	_hat_root.position.y = 0.25  # top of the head
 	head.add_child(_hat_root)
+
+
+## The face: two eyes and a mouth as flat boxes on the -Z side of the head.
+## Which boxes you get depends on the picked expression.
+func _build_face(head: MeshInstance3D) -> void:
+	var dark := Color(0.08, 0.06, 0.08)
+	var mouth_c := Color(0.5, 0.12, 0.12)
+	var z := -0.255
+	match face_style:
+		1:  # Gembira: happy squint eyes and a big open grin.
+			U.mesh_box(head, Vector3(0.13, 0.05, 0.02), Vector3(-0.11, 0.06, z), dark)
+			U.mesh_box(head, Vector3(0.13, 0.05, 0.02), Vector3(0.11, 0.06, z), dark)
+			U.mesh_box(head, Vector3(0.24, 0.16, 0.02), Vector3(0, -0.12, z), mouth_c)
+		2:  # Biasa: plain dots and a straight little mouth.
+			U.mesh_box(head, Vector3(0.07, 0.1, 0.02), Vector3(-0.11, 0.05, z), dark)
+			U.mesh_box(head, Vector3(0.07, 0.1, 0.02), Vector3(0.11, 0.05, z), dark)
+			U.mesh_box(head, Vector3(0.14, 0.03, 0.02), Vector3(0, -0.11, z), mouth_c)
+		3:  # Terkejut: big eyes and a small round mouth.
+			U.mesh_box(head, Vector3(0.13, 0.17, 0.02), Vector3(-0.11, 0.06, z), dark)
+			U.mesh_box(head, Vector3(0.13, 0.17, 0.02), Vector3(0.11, 0.06, z), dark)
+			U.mesh_box(head, Vector3(0.1, 0.12, 0.02), Vector3(0, -0.13, z), mouth_c)
+		4:  # Ngantuk: closed eyes and a tiny yawn.
+			U.mesh_box(head, Vector3(0.13, 0.03, 0.02), Vector3(-0.11, 0.05, z), dark)
+			U.mesh_box(head, Vector3(0.13, 0.03, 0.02), Vector3(0.11, 0.05, z), dark)
+			U.mesh_box(head, Vector3(0.1, 0.09, 0.02), Vector3(0, -0.12, z), mouth_c)
+		5:  # Kedip: one eye open, one eye winking, and a smile.
+			U.mesh_box(head, Vector3(0.08, 0.12, 0.02), Vector3(-0.11, 0.05, z), dark)
+			U.mesh_box(head, Vector3(0.13, 0.03, 0.02), Vector3(0.11, 0.05, z), dark)
+			_smile(head, mouth_c, z)
+		_:  # Senyum: the friendly default.
+			U.mesh_box(head, Vector3(0.08, 0.12, 0.02), Vector3(-0.11, 0.05, z), dark)
+			U.mesh_box(head, Vector3(0.08, 0.12, 0.02), Vector3(0.11, 0.05, z), dark)
+			_smile(head, mouth_c, z)
+
+
+## A smile from three boxes: a middle bar and two ends tipped up.
+func _smile(head: MeshInstance3D, c: Color, z: float) -> void:
+	U.mesh_box(head, Vector3(0.16, 0.05, 0.02), Vector3(0, -0.13, z), c)
+	for side: float in [-1.0, 1.0]:
+		var end := U.mesh_box(head, Vector3(0.05, 0.09, 0.02), Vector3(0.1 * side, -0.1, z), c)
+		end.rotation.z = 0.5 * side
+
+
+## Hair (or a hijab) as boxes on the head. The face side is -Z and stays open,
+## so a hijab wraps the top, back and sides and drapes over the shoulders.
+func _build_hair(head: MeshInstance3D) -> void:
+	if wear_hijab:
+		var c := hijab_color
+		U.mesh_box(head, Vector3(0.56, 0.18, 0.56), Vector3(0, 0.24, 0), c)
+		U.mesh_box(head, Vector3(0.56, 0.72, 0.14), Vector3(0, -0.08, 0.24), c)
+		for side: float in [-1.0, 1.0]:
+			U.mesh_box(head, Vector3(0.13, 0.58, 0.52), Vector3(0.245 * side, -0.02, 0), c)
+		# The drape over the shoulders hangs from the model, not the head.
+		U.mesh_box(_model, Vector3(0.74, 0.42, 0.62), Vector3(0, 1.24, 0.04), c)
+		return
+	var c := hair_color
+	match hair_style:
+		1:  # Pendek: a neat cap and a short back.
+			U.mesh_box(head, Vector3(0.54, 0.14, 0.54), Vector3(0, 0.23, 0), c)
+			U.mesh_box(head, Vector3(0.54, 0.3, 0.1), Vector3(0, 0.08, 0.24), c)
+		2:  # Jabrik: a cap plus three spikes.
+			U.mesh_box(head, Vector3(0.54, 0.12, 0.54), Vector3(0, 0.23, 0), c)
+			for i in 3:
+				var spike := U.mesh_box(head, Vector3(0.13, 0.26, 0.13), Vector3(-0.16 + 0.16 * i, 0.38, 0), c)
+				spike.rotation.z = -0.25 + 0.25 * i
+		3:  # Panjang: over the top, down the back and both sides.
+			U.mesh_box(head, Vector3(0.54, 0.14, 0.54), Vector3(0, 0.23, 0), c)
+			U.mesh_box(head, Vector3(0.54, 0.68, 0.12), Vector3(0, -0.06, 0.24), c)
+			for side: float in [-1.0, 1.0]:
+				U.mesh_box(head, Vector3(0.11, 0.52, 0.44), Vector3(0.24 * side, -0.03, 0), c)
 
 
 func _build_camera() -> void:
@@ -206,6 +424,8 @@ func _read_jump() -> bool:
 
 
 func _physics_process(delta: float) -> void:
+	if is_remote:
+		return  # Puppets are placed by _update_puppet, not by physics.
 	_seat_cooldown -= delta
 	_kick_cooldown -= delta
 	_float_cooldown -= delta
@@ -405,8 +625,89 @@ func _after_move() -> bool:
 
 
 func _process(delta: float) -> void:
+	if is_remote:
+		_update_puppet(delta)
+		return
 	_update_camera(delta)
 	_update_model(delta)
+	if peer_id != 0:
+		_net_timer -= delta
+		if _net_timer <= 0.0:
+			_net_timer = NET_SEND_EVERY
+			rpc("_receive_state", global_position, _model.rotation.y,
+				Vector3(velocity.x, 0, velocity.z).length(), _state_code())
+
+
+## What the body is doing, as a small number the puppets can pose with:
+## 0 walking/standing, 1 on a swing, 2 in a swim ring, 3 climbing, 4 in the
+## air, 5 on a slide.
+func _state_code() -> int:
+	if _seat:
+		return 1
+	if _float:
+		return 2
+	if _climbing:
+		return 3
+	if _was_on_slide:
+		return 5
+	if not is_on_floor():
+		return 4
+	return 0
+
+
+## Sent by the phone that owns this player, about 20 times a second.
+@rpc("any_peer", "unreliable")
+func _receive_state(pos: Vector3, yaw: float, speed: float, state: int) -> void:
+	if not is_remote or multiplayer.get_remote_sender_id() != peer_id:
+		return
+	if not _net_started:
+		_net_started = true
+		global_position = pos
+	_net_pos = pos
+	_net_yaw = yaw
+	_net_speed = speed
+	_net_state = state
+
+
+## Sent by the owning phone when a game starts and when the look changes.
+@rpc("any_peer", "reliable")
+func _receive_profile(d: Dictionary) -> void:
+	if not is_remote or multiplayer.get_remote_sender_id() != peer_id:
+		return
+	apply_profile(d)
+	print("NET: profile from peer ", peer_id, ": name=", player_name, " gender=", gender, " hat=", hat)
+
+
+## Move and pose a puppet toward the last place its owner sent.
+func _update_puppet(delta: float) -> void:
+	if _net_started:
+		if global_position.distance_to(_net_pos) > 6.0:
+			global_position = _net_pos  # teleported (fell and respawned): snap
+		else:
+			global_position = global_position.lerp(_net_pos, 1.0 - exp(-14.0 * delta))
+		_model.rotation.y = lerp_angle(_model.rotation.y, _net_yaw, 1.0 - exp(-14.0 * delta))
+	var leg_swing := 0.0
+	var arm_angle := 0.0
+	match _net_state:
+		1:  # on a swing: legs forward, hands on the ropes
+			leg_swing = -1.4
+			arm_angle = -2.9
+		2:  # in a swim ring
+			leg_swing = -1.3
+			arm_angle = -0.9
+		3, 4, 5:  # climbing, flying or sliding: arms up
+			arm_angle = -2.6
+			leg_swing = 0.35 if _net_state == 4 else 0.0
+		_:
+			if _net_speed > 0.5:
+				_walk_time += delta * _net_speed * 1.8
+				leg_swing = sin(_walk_time) * 0.7
+	for i in 2:
+		var s := 1.0 if i == 0 else -1.0
+		_legs[i].rotation.x = lerpf(_legs[i].rotation.x, leg_swing * s, 0.3)
+		var arm_target := arm_angle if arm_angle != 0.0 else -leg_swing * s
+		_arms[i].rotation.x = lerpf(_arms[i].rotation.x, arm_target, 0.25)
+	_update_shadow()
 
 
 func _update_camera(delta: float) -> void:
