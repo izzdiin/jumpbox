@@ -26,6 +26,15 @@ const HALF_SIZE := 38.0
 const NET_PORT := 8899
 const MAX_PEERS := 4
 const SETTINGS_PATH := "user://settings.cfg"
+## Finding a host without typing: hosts answer a broadcast shout on this port.
+const DISCOVERY_PORT := 8900
+const DISCOVER_MSG := "JUMPBOX_DISCOVER?"
+const HOST_MSG_PREFIX := "JUMPBOX_HOST "
+## The running race: from the start line to the finish line across the park.
+const RACE_START_Z := 30.0
+const RACE_FINISH_Z := -32.0
+const RACE_COUNTDOWN := 3.0
+const RACE_TIMEOUT := 30.0
 
 const GRASS := Color(0.42, 0.78, 0.35)
 const SAND := Color(0.96, 0.86, 0.6)
@@ -52,6 +61,17 @@ var _icons: Array[Node3D] = []
 var _net_active := false
 var _is_host := false
 var _puppets := {}
+## Host discovery (broadcast shout) and the running race.
+var _discovery: PacketPeerUDP
+var _scan_peer: PacketPeerUDP
+var _scan_deadline := 0
+var _scan_found := {}
+var _race_state := 0  # 0 idle, 1 countdown, 2 running
+var _race_timer := 0.0
+var _race_total := 0
+var _race_finishers: Array[int] = []
+var _race_banner: Label
+var _banner_timer := 0.0
 
 
 func _ready() -> void:
@@ -106,6 +126,8 @@ func _ready() -> void:
 	menu.host_pressed.connect(net_host)
 	menu.join_pressed.connect(net_join)
 	menu.leave_pressed.connect(net_disconnect)
+	menu.scan_pressed.connect(net_scan)
+	menu.race_pressed.connect(_on_race_pressed)
 	menu.profile_changed.connect(_on_profile_changed)
 	menu.set_profile(_player.profile_dict())
 	menu.set_net_status("Tidak terhubung. Main sendiri.")
@@ -119,6 +141,19 @@ func _ready() -> void:
 	multiplayer.connected_to_server.connect(_on_connected_to_server)
 	multiplayer.connection_failed.connect(_on_connection_failed)
 	multiplayer.server_disconnected.connect(_on_server_disconnected)
+
+	_race_banner = Label.new()
+	_race_banner.anchor_left = 0.0
+	_race_banner.anchor_right = 1.0
+	_race_banner.offset_top = 84
+	_race_banner.offset_bottom = 190
+	_race_banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_race_banner.add_theme_font_size_override("font_size", 64)
+	_race_banner.add_theme_color_override("font_color", Color.WHITE)
+	_race_banner.add_theme_color_override("font_outline_color", Color(0.1, 0.1, 0.15))
+	_race_banner.add_theme_constant_override("outline_size", 18)
+	_race_banner.visible = false
+	layer.add_child(_race_banner)
 
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--shot="):
@@ -247,6 +282,9 @@ func _build_door(course_name: String) -> void:
 
 
 func _process(delta: float) -> void:
+	_poll_discovery()
+	_poll_scan()
+	_race_process(delta)
 	for icon in _icons:
 		icon.rotation.y += delta * 1.2
 		icon.position.y += sin(Time.get_ticks_msec() * 0.003) * delta * 0.3
@@ -521,6 +559,11 @@ func net_host() -> void:
 	_player.name = "Player1"
 	print("NET: hosting on port ", NET_PORT)
 	_update_net_status()
+	# Answer discovery shouts, so other phones can find this host by scanning.
+	_discovery = PacketPeerUDP.new()
+	_discovery.set_broadcast_enabled(true)
+	if _discovery.bind(DISCOVERY_PORT) != OK:
+		_discovery = null
 
 
 func net_join(ip: String) -> void:
@@ -550,6 +593,14 @@ func net_disconnect() -> void:
 
 
 func _end_session(message: String) -> void:
+	_stop_scan()
+	if _discovery:
+		_discovery.close()
+		_discovery = null
+	if _race_state != 0:
+		_race_state = 0
+		_player.move_scale = 1.0
+		_race_banner.visible = false
 	for id in _puppets:
 		_puppets[id].queue_free()
 	_puppets.clear()
@@ -647,3 +698,194 @@ func _local_ip_text() -> String:
 	if found.is_empty():
 		return "(tidak ketemu, cek WiFi)"
 	return ", ".join(found)
+
+
+## --- Finding a host by scanning ---------------------------------------------
+## The host answers a broadcast shout with its name; the searching phone
+## lists every answer as a one-tap join button. Typing the address by hand
+## stays as the fallback when a network swallows broadcasts.
+
+func net_scan() -> void:
+	if _net_active:
+		_menu.set_scan_status("Sudah terhubung. Putuskan dulu untuk mencari.")
+		return
+	_stop_scan()
+	_scan_found.clear()
+	_menu.set_scan_results({})
+	_scan_peer = PacketPeerUDP.new()
+	_scan_peer.set_broadcast_enabled(true)
+	if _scan_peer.bind(0) != OK:
+		_scan_peer = null
+		_menu.set_scan_status("Tidak bisa mencari di jaringan ini.")
+		return
+	_scan_peer.set_dest_address("255.255.255.255", DISCOVERY_PORT)
+	_scan_peer.put_packet(DISCOVER_MSG.to_utf8_buffer())
+	# Some routers drop the global broadcast but pass the subnet one.
+	for ip in IP.get_local_addresses():
+		var parts := ip.split(".")
+		if parts.size() == 4:
+			_scan_peer.set_dest_address(parts[0] + "." + parts[1] + "." + parts[2] + ".255", DISCOVERY_PORT)
+			_scan_peer.put_packet(DISCOVER_MSG.to_utf8_buffer())
+	_scan_deadline = Time.get_ticks_msec() + 2500
+	_menu.set_scan_status("Mencari tuan rumah...")
+	print("NET: scanning for hosts")
+
+
+func _stop_scan() -> void:
+	if _scan_peer:
+		_scan_peer.close()
+		_scan_peer = null
+
+
+func _poll_scan() -> void:
+	if _scan_peer == null:
+		return
+	var changed := false
+	while _scan_peer.get_available_packet_count() > 0:
+		var msg := _scan_peer.get_packet().get_string_from_utf8()
+		if msg.begins_with(HOST_MSG_PREFIX):
+			var ip := _scan_peer.get_packet_ip()
+			if not _scan_found.has(ip):
+				_scan_found[ip] = msg.trim_prefix(HOST_MSG_PREFIX)
+				changed = true
+				print("NET: scan found host ", ip)
+	if changed:
+		_menu.set_scan_results(_scan_found)
+		_menu.set_scan_status("Ketemu! Ketuk nama untuk langsung gabung.")
+	if Time.get_ticks_msec() > _scan_deadline:
+		_stop_scan()
+		if _scan_found.is_empty():
+			_menu.set_scan_status("Tidak ditemukan. Coba ketik alamatnya di bawah.")
+
+
+func _poll_discovery() -> void:
+	if _discovery == null:
+		return
+	while _discovery.get_available_packet_count() > 0:
+		var msg := _discovery.get_packet().get_string_from_utf8()
+		if msg == DISCOVER_MSG:
+			var nm: String = _player.player_name if _player.player_name != "" else "Tuan Rumah"
+			_discovery.set_dest_address(_discovery.get_packet_ip(), _discovery.get_packet_port())
+			_discovery.put_packet((HOST_MSG_PREFIX + nm).to_utf8_buffer())
+
+
+## --- The running race ---------------------------------------------------------
+## Anyone in the game can start it for everyone: all players are lined up
+## across the park, counted down, and race to the far fence. Places are
+## shared as each runner crosses the finish line.
+
+func _on_race_pressed() -> void:
+	if not _net_active:
+		_menu.set_net_status("Balap lari perlu teman: jadi tuan rumah atau gabung dulu.")
+		return
+	rpc("_race_start")
+
+
+@rpc("any_peer", "reliable", "call_local")
+func _race_start() -> void:
+	if _race_state != 0:
+		return
+	if _active:
+		_go_home()
+	var ids := _race_ids()
+	_race_total = ids.size()
+	_race_finishers.clear()
+	var slot := ids.find(_my_id())
+	var x := (float(slot) - float(ids.size() - 1) / 2.0) * 1.6
+	_player.teleport(Vector3(x, 0.1, RACE_START_Z))
+	_player.look_toward(Vector3(0, 0, -1))
+	_player.move_scale = 0.0
+	_race_state = 1
+	_race_timer = RACE_COUNTDOWN
+	_show_banner("Balap Lari mulai dalam 3...")
+	print("NET: race started, ", _race_total, " runners")
+
+
+@rpc("any_peer", "reliable", "call_local")
+func _race_finish() -> void:
+	var id := multiplayer.get_remote_sender_id()
+	if id == 0:
+		id = multiplayer.get_unique_id()
+	_apply_finish(id)
+
+
+func _race_process(delta: float) -> void:
+	if _banner_timer > 0.0:
+		_banner_timer -= delta
+		if _banner_timer <= 0.0 and _race_state != 1:
+			_race_banner.visible = false
+	if _race_state == 1:
+		_race_timer -= delta
+		if _race_timer > 0.0:
+			_show_banner("Balap Lari mulai dalam %d..." % maxi(int(ceil(_race_timer)), 1))
+		else:
+			_race_state = 2
+			_race_timer = RACE_TIMEOUT
+			_player.move_scale = 1.0
+			_show_banner("LARI!")
+			_banner_timer = 1.0
+	elif _race_state == 2:
+		_race_timer -= delta
+		var my := _my_id()
+		if not _race_finishers.has(my) and _player.global_position.z <= RACE_FINISH_Z:
+			if _net_active:
+				rpc("_race_finish")
+			else:
+				_apply_finish(my)
+		if _race_state == 2 and _race_timer <= 0.0:
+			_end_race()
+
+
+func _apply_finish(id: int) -> void:
+	if _race_state != 2 or _race_finishers.has(id):
+		return
+	_race_finishers.append(id)
+	var place := _race_finishers.size()
+	if place == 1:
+		U.confetti(self, Vector3(0, 1.5, RACE_FINISH_Z), 40, RAINBOW)
+	if id == _my_id():
+		_show_banner("Kamu finish ke-%d!" % place)
+		_banner_timer = 3.0
+	elif place == 1:
+		_show_banner("%s menang!" % _name_for_id(id))
+		_banner_timer = 3.0
+	print("NET: race finish #", place, " = ", _name_for_id(id))
+	if _race_finishers.size() >= _race_total:
+		_end_race()
+
+
+func _end_race() -> void:
+	if not _race_finishers.is_empty():
+		_show_banner("Pemenang: %s. Balap selesai!" % _name_for_id(_race_finishers[0]))
+	else:
+		_show_banner("Balap selesai.")
+	_banner_timer = 4.0
+	_race_state = 0
+	_player.move_scale = 1.0
+
+
+func _my_id() -> int:
+	return multiplayer.get_unique_id() if _net_active else 0
+
+
+func _race_ids() -> Array[int]:
+	var ids: Array[int] = []
+	ids.append(_my_id())
+	for id in _puppets:
+		ids.append(int(id))
+	ids.sort()
+	return ids
+
+
+func _name_for_id(id: int) -> String:
+	var nm := ""
+	if id == _my_id():
+		nm = _player.player_name
+	elif _puppets.has(id):
+		nm = _puppets[id].player_name
+	return nm if nm != "" else "Pemain %d" % id
+
+
+func _show_banner(text: String) -> void:
+	_race_banner.text = text
+	_race_banner.visible = true

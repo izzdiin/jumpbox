@@ -15,11 +15,13 @@ on the phone and is still there next time.
 
 **Play together on the same WiFi**: up to four phones can share one park. On one phone
 open the menu, tap **Main Berdua**, then **Jadi Tuan Rumah**; the screen shows that
-phone's address. On each other phone tap **Main Berdua**, type the address, and tap
-**Gabung**. The other kids appear with their name over their head, wearing the look
-they picked. No internet is used: the phones talk straight to each other over the
-local network. Each phone still runs its own park, so swings, balls and doors move
-on your phone only.
+phone's address. On each other phone tap **Main Berdua**, then **Cari Tuan Rumah**
+to find the host by itself; typing the address by hand still works when a network
+hides the scan. The other kids appear with their name over their head, wearing the
+look they picked. No internet is used: the phones talk straight to each other over
+the local network. Each phone still runs its own park, so swings, balls and doors
+move on your phone only. While you are together, **Balap Lari** on the same page
+lines everyone up across the park for a running race to the far fence.
 
 ![The five hats: crown, snowman, teddy bear, bunny ears and flower hat](docs/hats.jpg)
 

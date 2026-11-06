@@ -58,5 +58,14 @@ func _initialize():
 		"puppet walks to where its owner is")
 	main._despawn_puppet(42)
 	_check(not main._puppets.has(42), "puppet leaves with its owner")
+
+	# A solo practice race: the countdown holds you, then you run to the line.
+	main._race_start()
+	_check(main._race_state == 1 and player.move_scale == 0.0, "race countdown holds the player")
+	await create_timer(3.4).timeout
+	_check(main._race_state == 2 and player.move_scale == 1.0, "race starts after the countdown")
+	player.teleport(Vector3(0, 0.1, main.RACE_FINISH_Z - 1.0))
+	await create_timer(0.3).timeout
+	_check(main._race_finishers.size() == 1 and main._race_state == 0, "crossing the line ends the race")
 	print("RESULT: %s" % ("PASS" if _fails == 0 else "FAIL (%d)" % _fails))
 	quit(0 if _fails == 0 else 1)

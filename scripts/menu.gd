@@ -1,9 +1,11 @@
 extends Control
 ## The menu: opened with the menu button at the top. It pauses the game and has big
 ## buttons to go back to playing, to read about the game, and to close the app.
-## Two more pages: Karakter (name, gender, colours, hair, hijab and face — the
+## More pages: Karakter (name, gender, colours, hair, hijab and face — the
 ## look is saved on this phone and shared with the other players in a WLAN
-## game) and Main Berdua (host or join a game on the same WiFi).
+## game) and Main Berdua (host or join a game on the same WiFi, find a host
+## with the scan button, and start a running race). Every page scrolls, so
+## the buttons at the bottom can always be reached, even on short screens.
 
 const PlayerScript := preload("res://scripts/player.gd")
 
@@ -20,13 +22,18 @@ const ORANGE := Color(1.0, 0.6, 0.15)
 signal host_pressed
 signal join_pressed(ip: String)
 signal leave_pressed
+signal scan_pressed
+signal race_pressed
 signal profile_changed(profile: Dictionary)
 
 var _main_box: VBoxContainer
+var _main_scroll: ScrollContainer
 var _about_box: VBoxContainer
+var _about_scroll: ScrollContainer
 var _char_box: VBoxContainer
 var _char_scroll: ScrollContainer
 var _net_box: VBoxContainer
+var _net_scroll: ScrollContainer
 
 ## The character being edited (a player.gd profile_dict). Set from main.gd;
 ## every change goes back up through profile_changed so main can apply it to
@@ -47,6 +54,8 @@ var _hijab_color_grid: GridContainer
 
 var _net_status: Label
 var _ip_edit: LineEdit
+var _scan_status: Label
+var _scan_box: VBoxContainer
 
 
 func _ready() -> void:
@@ -73,7 +82,8 @@ func _ready() -> void:
 	var pages := VBoxContainer.new()
 	card.add_child(pages)
 
-	_main_box = _page(pages)
+	_main_scroll = _scroll(pages)
+	_main_box = _page(_main_scroll)
 	_label(_main_box, "Menu", 48)
 	_button(_main_box, "Main lagi", GREEN, close)
 	_button(_main_box, "Tentang", BLUE, _show_about)
@@ -81,7 +91,8 @@ func _ready() -> void:
 	_button(_main_box, "Karakter", PURPLE, _show_char)
 	_button(_main_box, "Main Berdua", ORANGE, _show_net)
 
-	_about_box = _page(pages)
+	_about_scroll = _scroll(pages)
+	_about_box = _page(_about_scroll)
 	_label(_about_box, "JumpBox", 48)
 	_label(_about_box, "Versi " + str(ProjectSettings.get_setting("application/config/version", "?")), 26)
 	_label(_about_box, "Main tanpa internet, gratis.", 26)
@@ -95,12 +106,8 @@ func _ready() -> void:
 
 
 func _build_char_page(pages: VBoxContainer) -> void:
-	# The character page is long, so it scrolls.
-	_char_scroll = ScrollContainer.new()
-	_char_scroll.custom_minimum_size = Vector2(500, 580)
-	pages.add_child(_char_scroll)
+	_char_scroll = _scroll(pages)
 	_char_box = _page(_char_scroll)
-	_char_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_label(_char_box, "Karakter", 40)
 	_label(_char_box, "Nama", 24)
 	_name_edit = LineEdit.new()
@@ -137,13 +144,22 @@ func _build_char_page(pages: VBoxContainer) -> void:
 
 
 func _build_net_page(pages: VBoxContainer) -> void:
-	_net_box = _page(pages)
+	_net_scroll = _scroll(pages)
+	_net_box = _page(_net_scroll)
 	_label(_net_box, "Main Berdua", 40)
 	_net_status = _label(_net_box, "Tidak terhubung. Main sendiri.", 24)
 	_net_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_net_status.custom_minimum_size = Vector2(420, 0)
+	_net_status.custom_minimum_size = Vector2(400, 0)
+	_button(_net_box, "Balap Lari", ORANGE, func():
+		race_pressed.emit()
+		close())
 	_button(_net_box, "Jadi Tuan Rumah", GREEN, func(): host_pressed.emit())
-	_label(_net_box, "atau gabung ke tuan rumah:", 24)
+	_button(_net_box, "Cari Tuan Rumah", BLUE, func(): scan_pressed.emit())
+	_scan_status = _label(_net_box, "", 22)
+	_scan_box = VBoxContainer.new()
+	_scan_box.add_theme_constant_override("separation", 12)
+	_net_box.add_child(_scan_box)
+	_label(_net_box, "atau ketik alamat tuan rumah:", 24)
 	_ip_edit = LineEdit.new()
 	_ip_edit.custom_minimum_size = Vector2(420, 72)
 	_ip_edit.add_theme_font_size_override("font_size", 32)
@@ -183,6 +199,27 @@ func set_net_status(text: String) -> void:
 func set_join_ip(ip: String) -> void:
 	if _ip_edit:
 		_ip_edit.text = ip
+
+
+## Called from main.gd while a host scan runs and when it finds someone.
+func set_scan_status(text: String) -> void:
+	if _scan_status:
+		_scan_status.text = text
+
+
+## The hosts a scan found, as {ip: name}. Each becomes a join button.
+func set_scan_results(found: Dictionary) -> void:
+	if _scan_box == null:
+		return
+	for child in _scan_box.get_children():
+		_scan_box.remove_child(child)
+		child.queue_free()
+	for ip in found:
+		_button(_scan_box, "Gabung ke %s (%s)" % [str(found[ip]), ip], GREEN, _on_scan_pick.bind(ip))
+
+
+func _on_scan_pick(ip: String) -> void:
+	join_pressed.emit(ip)
 
 
 func _emit_profile() -> void:
@@ -291,36 +328,42 @@ func _fill_choices(grid: GridContainer, names: Array, current: int, min_size: Ve
 
 
 func _show_main() -> void:
-	_main_box.visible = true
-	_about_box.visible = false
-	_char_scroll.visible = false
-	_net_box.visible = false
+	_show_only(_main_scroll, _main_box)
 
 
 func _show_about() -> void:
-	_main_box.visible = false
-	_about_box.visible = true
-	_char_scroll.visible = false
-	_net_box.visible = false
+	_show_only(_about_scroll, _about_box)
 
 
 func _show_char() -> void:
-	_main_box.visible = false
-	_about_box.visible = false
-	_char_scroll.visible = true
-	_net_box.visible = false
+	_show_only(_char_scroll, _char_box)
 
 
 func _show_net() -> void:
-	_main_box.visible = false
-	_about_box.visible = false
-	_char_scroll.visible = false
-	_net_box.visible = true
+	_show_only(_net_scroll, _net_box)
+
+
+## Only one page shows at a time. The tests look at the boxes, the layout
+## looks at the scroll containers, so both get the same answer.
+func _show_only(scroll: ScrollContainer, box: VBoxContainer) -> void:
+	for s in [_main_scroll, _about_scroll, _char_scroll, _net_scroll]:
+		s.visible = s == scroll
+	for b in [_main_box, _about_box, _char_box, _net_box]:
+		b.visible = b == box
+
+
+## A page-sized scroll area: tall pages stay reachable on short screens.
+func _scroll(parent: Node) -> ScrollContainer:
+	var s := ScrollContainer.new()
+	s.custom_minimum_size = Vector2(500, 540)
+	parent.add_child(s)
+	return s
 
 
 func _page(parent: Node) -> VBoxContainer:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 20)
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	parent.add_child(box)
 	return box
 
