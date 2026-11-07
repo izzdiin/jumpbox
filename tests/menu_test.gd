@@ -31,8 +31,21 @@ func _initialize():
 	_check(menu.visible and paused, "menu button opens the menu and pauses")
 	_find_button(menu._main_box, "Tentang").pressed.emit()
 	_check(menu._about_box.visible and not menu._main_box.visible, "about page shows")
+	var about_text := ""
+	for child in menu._about_box.get_children():
+		if child is Label:
+			about_text += child.text + "\n"
+	_check(about_text.contains("Log Perubahan") and about_text.contains("0.22")
+		and about_text.contains("Yusuf") and about_text.contains("iz_ddin"),
+		"about shows the per-version changelog")
+	_check(not about_text.contains("Main tanpa internet") and not about_text.contains("Threads"),
+		"about dropped the old credit lines")
 	_find_button(menu._about_box, "Kembali").pressed.emit()
 	_check(menu._main_box.visible, "back to the menu")
+	_find_button(menu._main_box, "Mini Game").pressed.emit()
+	_check(menu._games_box.visible and not menu._main_box.visible, "mini game page shows")
+	_find_button(menu._games_box, "Kembali").pressed.emit()
+	_check(menu._main_box.visible, "back from mini games")
 	_find_button(menu._main_box, "Main lagi").pressed.emit()
 	_check(not menu.visible and not paused, "play again closes the menu")
 	print("RESULT: %s" % ("PASS" if _fails == 0 else "FAIL (%d)" % _fails))

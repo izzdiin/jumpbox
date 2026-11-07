@@ -51,6 +51,31 @@ const RACE_COIN_SPOTS := [
 	[25.6, -16.0], [28.8, -22.0], [30.4, -28.0], [27.2, -28.0],
 ]
 
+## Hijaiyah Adventure: the 28 letters, in their usual teaching order, and
+## the hiding spots around the park where the letter boards wait.
+const HIJAIYAH: Array[String] = ["ا", "ب", "ت", "ث", "ج", "ح", "خ", "د", "ذ", "ر", "ز", "س", "ش", "ص", "ض", "ط", "ظ", "ع", "غ", "ف", "ق", "ك", "ل", "م", "ن", "ه", "و", "ي"]
+const HIJ_SPOTS: Array[Vector3] = [Vector3(-16, 0, 8), Vector3(12, 0, 20), Vector3(-4, 0, -24), Vector3(18, 0, -8), Vector3(-20, 0, -16), Vector3(4, 0, 32), Vector3(-28, 0, 4), Vector3(20, 0, 28), Vector3(-16, 0, 30), Vector3(14, 0, -26)]
+
+## Wudhu Challenge: where the washing place stands, and the washing order
+## step by step. "part" is the marker spot on the character (which faces
+## -Z), "times" how often the big button is pressed, "btn" its caption.
+const WUDHU_POS := Vector3(-24, 0, 21.5)
+const WUDHU_COLORS: Array[Color] = [Color(0.35, 0.7, 1.0), Color(0.75, 0.9, 1.0), Color(1, 1, 1)]
+const WUDHU_STEPS := [
+	{"name": "Niat dan membaca basmalah", "part": Vector3(0, 1.15, -0.35), "times": 1, "btn": "NIAT"},
+	{"name": "Membasuh kedua telapak tangan", "part": Vector3(0, 0.95, -0.35), "times": 3, "btn": "AIR!"},
+	{"name": "Berkumur", "part": Vector3(0, 1.48, -0.36), "times": 3, "btn": "AIR!"},
+	{"name": "Membasuh hidung", "part": Vector3(0, 1.58, -0.36), "times": 3, "btn": "AIR!"},
+	{"name": "Membasuh wajah", "part": Vector3(0, 1.64, -0.36), "times": 3, "btn": "AIR!"},
+	{"name": "Membasuh lengan kanan sampai siku", "part": Vector3(0.52, 1.15, -0.2), "times": 3, "btn": "AIR!"},
+	{"name": "Membasuh lengan kiri sampai siku", "part": Vector3(-0.52, 1.15, -0.2), "times": 3, "btn": "AIR!"},
+	{"name": "Mengusap kepala", "part": Vector3(0, 2.02, 0), "times": 1, "btn": "USAP"},
+	{"name": "Mengusap telinga", "part": Vector3(0.3, 1.66, 0), "times": 1, "btn": "USAP"},
+	{"name": "Membasuh kaki kanan sampai mata kaki", "part": Vector3(0.28, 0.3, -0.2), "times": 3, "btn": "AIR!"},
+	{"name": "Membasuh kaki kiri sampai mata kaki", "part": Vector3(-0.28, 0.3, -0.2), "times": 3, "btn": "AIR!"},
+	{"name": "Doa sesudah wudhu", "part": Vector3(0, 2.0, -0.3), "times": 1, "btn": "DOA"},
+]
+
 const GRASS := Color(0.42, 0.78, 0.35)
 const SAND := Color(0.96, 0.86, 0.6)
 const WOOD := Color(0.6, 0.4, 0.22)
@@ -94,6 +119,22 @@ var _race_obstacles: Array[Node] = []
 var _race_coin_counts := {}
 var _race_names := {}
 
+## The two learning games (see start_hijaiyah and start_wudhu). One runs at
+## a time, both are solo, and both share the two prompt labels.
+var _game_label: Label
+var _game_sub: Label
+var _game_clear_timer := 0.0
+var _hij_active := false
+var _hij_order: Array[int] = []
+var _hij_pos := 0
+var _hij_tokens: Array[Dictionary] = []
+var _hij_cooldown := 0.0
+var _wudhu_button: Button
+var _wudhu_marker: MeshInstance3D
+var _wudhu_active := false
+var _wudhu_step := 0
+var _wudhu_presses := 0
+
 
 func _ready() -> void:
 	_sound = SoundScript.new()
@@ -104,6 +145,8 @@ func _ready() -> void:
 	_build_ground()
 	_build_fence()
 	_build_race_arena()
+	_build_wudhu_station()
+	_build_hijaiyah_tokens()
 	_build_trampolines()
 	_build_slide(Vector3(7, 0, -2), 2.6, RAINBOW[4])
 	_build_slide(Vector3(15, 0, 0), 5.0, RAINBOW[0])
@@ -150,6 +193,8 @@ func _ready() -> void:
 	menu.leave_pressed.connect(net_disconnect)
 	menu.scan_pressed.connect(net_scan)
 	menu.race_pressed.connect(_on_race_pressed)
+	menu.hijaiyah_pressed.connect(start_hijaiyah)
+	menu.wudhu_pressed.connect(start_wudhu)
 	menu.profile_changed.connect(_on_profile_changed)
 	menu.set_profile(_player.profile_dict())
 	menu.set_net_status("Tidak terhubung. Main sendiri.")
@@ -193,6 +238,71 @@ func _ready() -> void:
 	_race_results.visible = false
 	layer.add_child(_race_results)
 
+	# Prompts for the two learning games: one big line (the letter to find or
+	# the wudhu step), a smaller progress line under it, one huge button for
+	# the washing steps, and a glowing blue marker that rides on the part of
+	# the character being washed.
+	_game_label = Label.new()
+	_game_label.anchor_left = 0.0
+	_game_label.anchor_right = 1.0
+	_game_label.offset_top = 84
+	_game_label.offset_bottom = 168
+	_game_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_game_label.add_theme_font_size_override("font_size", 54)
+	_game_label.add_theme_color_override("font_color", Color.WHITE)
+	_game_label.add_theme_color_override("font_outline_color", Color(0.1, 0.1, 0.15))
+	_game_label.add_theme_constant_override("outline_size", 14)
+	_game_label.visible = false
+	layer.add_child(_game_label)
+
+	_game_sub = Label.new()
+	_game_sub.anchor_left = 0.0
+	_game_sub.anchor_right = 1.0
+	_game_sub.offset_top = 168
+	_game_sub.offset_bottom = 214
+	_game_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_game_sub.add_theme_font_size_override("font_size", 30)
+	_game_sub.add_theme_color_override("font_color", Color.WHITE)
+	_game_sub.add_theme_color_override("font_outline_color", Color(0.1, 0.1, 0.15))
+	_game_sub.add_theme_constant_override("outline_size", 10)
+	_game_sub.visible = false
+	layer.add_child(_game_sub)
+
+	_wudhu_button = Button.new()
+	_wudhu_button.anchor_left = 0.5
+	_wudhu_button.anchor_right = 0.5
+	_wudhu_button.anchor_top = 1.0
+	_wudhu_button.anchor_bottom = 1.0
+	_wudhu_button.offset_left = -150
+	_wudhu_button.offset_right = 150
+	_wudhu_button.offset_top = -204
+	_wudhu_button.offset_bottom = -96
+	_wudhu_button.add_theme_font_size_override("font_size", 44)
+	_wudhu_button.add_theme_color_override("font_color", Color.WHITE)
+	for st in ["normal", "hover"]:
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color(0.25, 0.6, 0.95)
+		sb.set_corner_radius_all(28)
+		_wudhu_button.add_theme_stylebox_override(st, sb)
+	var sbp := StyleBoxFlat.new()
+	sbp.bg_color = Color(0.15, 0.45, 0.8)
+	sbp.set_corner_radius_all(28)
+	_wudhu_button.add_theme_stylebox_override("pressed", sbp)
+	_wudhu_button.visible = false
+	_wudhu_button.pressed.connect(_on_wudhu_press)
+	layer.add_child(_wudhu_button)
+
+	var sphere := SphereMesh.new()
+	sphere.radius = 0.17
+	sphere.height = 0.34
+	sphere.radial_segments = 16
+	sphere.rings = 8
+	_wudhu_marker = MeshInstance3D.new()
+	_wudhu_marker.mesh = sphere
+	_wudhu_marker.material_override = U.mat(Color(0.3, 0.65, 1.0, 0.85))
+	_wudhu_marker.visible = false
+	add_child(_wudhu_marker)
+
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--shot="):
 			_take_screenshot(arg.trim_prefix("--shot="))
@@ -205,6 +315,7 @@ func _ready() -> void:
 func _enter_course(course_name: String) -> void:
 	if _active:
 		return
+	_cancel_games()
 	var course: Node = _courses.get(course_name)
 	if course == null:
 		var info: Dictionary = COURSES[course_name]
@@ -227,6 +338,7 @@ func _skip_stage(step: int) -> void:
 
 
 func _go_home() -> void:
+	_cancel_games()
 	if _active:
 		_active.leave()
 		_active = null
@@ -323,6 +435,7 @@ func _process(delta: float) -> void:
 	_poll_discovery()
 	_poll_scan()
 	_race_process(delta)
+	_games_process(delta)
 	for icon in _icons:
 		icon.rotation.y += delta * 1.2
 		icon.position.y += sin(Time.get_ticks_msec() * 0.003) * delta * 0.3
@@ -731,15 +844,223 @@ func net_join(ip: String) -> void:
 	print("NET: joining ", ip)
 
 
+## --- The learning games: Hijaiyah Adventure and Wudhu Challenge ---
+
+## Stop both games and hide their signs.
+func _cancel_games() -> void:
+	_hij_active = false
+	for tok in _hij_tokens:
+		tok["root"].visible = false
+	_wudhu_active = false
+	if _wudhu_button:
+		_wudhu_button.visible = false
+	if _wudhu_marker:
+		_wudhu_marker.visible = false
+	if _game_label:
+		_game_label.visible = false
+	if _game_sub:
+		_game_sub.visible = false
+	_game_clear_timer = 0.0
+
+
+func _games_process(delta: float) -> void:
+	if _game_clear_timer > 0.0:
+		_game_clear_timer -= delta
+		if _game_clear_timer <= 0.0 and not _hij_active and not _wudhu_active:
+			_game_label.visible = false
+			_game_sub.visible = false
+	if _hij_active:
+		_hij_cooldown -= delta
+		var target: String = HIJAIYAH[_hij_order[_hij_pos]]
+		for tok in _hij_tokens:
+			var root: Node3D = tok["root"]
+			if not root.visible:
+				continue
+			var flat := Vector2(_player.global_position.x - root.position.x,
+				_player.global_position.z - root.position.z).length()
+			if flat > 2.2:
+				tok["armed"] = true
+			elif flat < 1.25 and tok["armed"] and _hij_cooldown <= 0.0:
+				tok["armed"] = false
+				if tok["letter"] == target:
+					_hij_found(root)
+				else:
+					_sound.play("boing", -4.0)
+					_game_sub.text = "Bukan yang ini. Cari huruf: " + target
+					_hij_cooldown = 0.8
+	if _wudhu_active and _wudhu_marker:
+		var step: Dictionary = WUDHU_STEPS[_wudhu_step]
+		_wudhu_marker.global_position = _player.global_position + step["part"]
+		_wudhu_marker.scale = Vector3.ONE * (1.0 + 0.22 * sin(Time.get_ticks_msec() * 0.008))
+
+
+## Four letter boards on posts, reused for every round of the hunt.
+func _build_hijaiyah_tokens() -> void:
+	for i in 4:
+		var root := Node3D.new()
+		root.visible = false
+		_park.add_child(root)
+		U.mesh_cylinder(root, 0.09, 1.0, Vector3(0, 0.5, 0), WOOD)
+		U.mesh_box(root, Vector3(1.15, 1.15, 0.1), Vector3(0, 1.6, 0), RAINBOW[i % RAINBOW.size()])
+		var label := Label3D.new()
+		label.font_size = 160
+		label.pixel_size = 0.0062
+		label.modulate = WHITE
+		label.outline_size = 20
+		label.outline_modulate = Color(0.1, 0.1, 0.15)
+		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		# The billboarded text plane passes through the board itself, so
+		# without this the board's front face hides the letter.
+		label.no_depth_test = true
+		label.position = Vector3(0, 1.6, 0)
+		root.add_child(label)
+		_hij_tokens.append({"root": root, "label": label, "letter": "", "armed": true})
+
+
+## Hijaiyah Adventure: a letter is shown at the top; four letter boards hide
+## around the park and walking into the matching one finds it. All 28
+## letters come by, in a shuffled order.
+func start_hijaiyah() -> void:
+	if _active:
+		_go_home()
+	_stop_race()
+	_cancel_games()
+	_hij_order.clear()
+	for i in HIJAIYAH.size():
+		_hij_order.append(i)
+	_hij_order.shuffle()
+	_hij_pos = 0
+	_hij_cooldown = 0.0
+	_hij_active = true
+	_hij_round()
+
+
+func _hij_round() -> void:
+	if _hij_pos >= HIJAIYAH.size():
+		_hij_active = false
+		for tok in _hij_tokens:
+			tok["root"].visible = false
+		_game_label.text = "Hebat! Semua huruf hijaiyah ditemukan!"
+		_game_sub.text = "Kamu sudah mengenal 28 huruf hijaiyah."
+		_game_label.visible = true
+		_game_sub.visible = true
+		_sound.play("fanfare")
+		_game_clear_timer = 6.0
+		return
+	var target: String = HIJAIYAH[_hij_order[_hij_pos]]
+	var letters: Array[String] = [target]
+	var k := 1
+	while letters.size() < _hij_tokens.size():
+		var cand: String = HIJAIYAH[_hij_order[(_hij_pos + k) % HIJAIYAH.size()]]
+		if not letters.has(cand):
+			letters.append(cand)
+		k += 1
+	letters.shuffle()
+	var start := (_hij_pos * 3) % HIJ_SPOTS.size()
+	for j in _hij_tokens.size():
+		var tok := _hij_tokens[j]
+		tok["letter"] = letters[j]
+		# Boards arm once the player is a few steps away, so the board you
+		# just found cannot fire again while you still stand on its spot.
+		tok["armed"] = false
+		tok["label"].text = letters[j]
+		tok["root"].position = HIJ_SPOTS[(start + j * 3) % HIJ_SPOTS.size()]
+		tok["root"].visible = true
+	_game_label.text = "Cari huruf: " + target
+	_game_sub.text = "Ditemukan: %d dari %d" % [_hij_pos, HIJAIYAH.size()]
+	_game_label.visible = true
+	_game_sub.visible = true
+
+
+func _hij_found(root: Node3D) -> void:
+	_sound.play("checkpoint")
+	U.confetti(self, root.position + Vector3(0, 1.6, 0), 30, RAINBOW)
+	_hij_pos += 1
+	_hij_cooldown = 0.6
+	_hij_round()
+
+
+## A little washing place in the park corner: basin, tap and water.
+func _build_wudhu_station() -> void:
+	var base := Vector3(-22.9, 0, 20.1)
+	U.block(_park, Vector3(0.5, 0.75, 0.5), base + Vector3(0, 0.375, 0), WHITE)
+	U.solid_cylinder(_park, 0.85, 0.25, base + Vector3(0, 0.85, 0), RAINBOW[4])
+	U.mesh_cylinder(_park, 0.72, 0.06, base + Vector3(0, 0.99, 0), Color(0.35, 0.7, 1.0))
+	U.mesh_box(_park, Vector3(0.12, 1.7, 0.12), base + Vector3(0, 0.85, -0.45), Color(0.6, 0.65, 0.7))
+	U.mesh_box(_park, Vector3(0.12, 0.12, 0.55), base + Vector3(0, 1.68, -0.22), Color(0.6, 0.65, 0.7))
+	U.mesh_box(_park, Vector3(0.12, 0.3, 0.12), base + Vector3(0, 1.52, 0.02), Color(0.6, 0.65, 0.7))
+	U.mesh_box(_park, Vector3(2.2, 0.06, 1.6), WUDHU_POS + Vector3(0, 0.03, 0), Color(0.55, 0.8, 0.95))
+
+
+## Wudhu Challenge: stand at the washing place, face the camera, and press
+## the big button for every wash. The blue marker shows which part is next,
+## so the order is learned by doing it.
+func start_wudhu() -> void:
+	if _active:
+		_go_home()
+	_stop_race()
+	_cancel_games()
+	_wudhu_active = true
+	_wudhu_step = 0
+	_wudhu_presses = 0
+	_player.teleport(WUDHU_POS + Vector3(0, 0.1, 0))
+	_player.look_toward(Vector3(0, 0, 1))
+	_player._model.rotation.y = 0.0
+	_wudhu_button.visible = true
+	_wudhu_marker.visible = true
+	_wudhu_show_step()
+
+
+func _wudhu_show_step() -> void:
+	var step: Dictionary = WUDHU_STEPS[_wudhu_step]
+	_game_label.text = "Wudhu: " + str(step["name"])
+	_game_sub.text = "Langkah %d dari %d" % [_wudhu_step + 1, WUDHU_STEPS.size()]
+	_game_label.visible = true
+	_game_sub.visible = true
+	_wudhu_button.text = str(step["btn"])
+
+
+func _on_wudhu_press() -> void:
+	if not _wudhu_active:
+		return
+	var step: Dictionary = WUDHU_STEPS[_wudhu_step]
+	_wudhu_presses += 1
+	var part_pos: Vector3 = _player.global_position + step["part"]
+	if step["btn"] == "AIR!":
+		_sound.play("splash", -4.0)
+		U.confetti(self, part_pos, 14, WUDHU_COLORS)
+	else:
+		_sound.play("checkpoint", -4.0)
+		U.confetti(self, part_pos, 10, RAINBOW)
+	if _wudhu_presses >= int(step["times"]):
+		_wudhu_step += 1
+		_wudhu_presses = 0
+		if _wudhu_step >= WUDHU_STEPS.size():
+			_wudhu_active = false
+			_wudhu_button.visible = false
+			_wudhu_marker.visible = false
+			_game_label.text = "Wudhu selesai! Hebat!"
+			_game_sub.text = "Kamu sudah belajar urutan wudhu."
+			_game_label.visible = true
+			_game_sub.visible = true
+			_sound.play("fanfare")
+			U.confetti(self, _player.global_position + Vector3(0, 1.8, 0), 50, RAINBOW)
+			_game_clear_timer = 6.0
+		else:
+			_sound.play("checkpoint", -2.0)
+			_wudhu_show_step()
+	else:
+		_game_sub.text = "Langkah %d dari %d — lagi %d kali" % [
+			_wudhu_step + 1, WUDHU_STEPS.size(), int(step["times"]) - _wudhu_presses]
+
+
 func net_disconnect() -> void:
 	_end_session("Kamu main sendiri sekarang.")
 
 
-func _end_session(message: String) -> void:
-	_stop_scan()
-	if _discovery:
-		_discovery.close()
-		_discovery = null
+## Stop any running race and put its signs away.
+func _stop_race() -> void:
 	if _race_state != 0:
 		_race_state = 0
 		_player.move_scale = 1.0
@@ -749,6 +1070,14 @@ func _end_session(message: String) -> void:
 	_results_timer = 0.0
 	for c in _race_coins:
 		c["node"].visible = false
+
+
+func _end_session(message: String) -> void:
+	_stop_scan()
+	if _discovery:
+		_discovery.close()
+		_discovery = null
+	_stop_race()
 	for id in _puppets:
 		_puppets[id].queue_free()
 	_puppets.clear()

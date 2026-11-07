@@ -91,5 +91,38 @@ func _initialize():
 		"results board shows after the race")
 	_check(main._race_results.text.contains("Sari") and main._race_results.text.contains("1 koin"),
 		"results compare the coin counts")
+
+	# Hijaiyah Adventure: the shown letter waits on a board in the park, and
+	# only the matching board counts.
+	main.start_hijaiyah()
+	_check(main._hij_active and main._hij_order.size() == 28, "hijaiyah adventure covers 28 letters")
+	var target_letter: String = main.HIJAIYAH[main._hij_order[main._hij_pos]]
+	var target_root: Node3D = null
+	var wrong_root: Node3D = null
+	for tok in main._hij_tokens:
+		if tok["letter"] == target_letter:
+			target_root = tok["root"]
+		else:
+			wrong_root = tok["root"]
+	_check(target_root != null and target_root.visible, "target letter board hides in the park")
+	player.teleport(wrong_root.position + Vector3(0, 0.1, 0))
+	await create_timer(0.3).timeout
+	_check(main._hij_pos == 0, "wrong letter does not count")
+	player.teleport(target_root.position + Vector3(0, 0.1, 0))
+	await create_timer(0.3).timeout
+	_check(main._hij_pos == 1, "finding the letter counts")
+	main._cancel_games()
+	_check(not main._hij_active, "hijaiyah adventure stops")
+
+	# Wudhu Challenge: the big button walks the whole washing order.
+	main.start_wudhu()
+	_check(main._wudhu_active and main._wudhu_step == 0, "wudhu challenge starts at niat")
+	_check(main._wudhu_button.visible and main._wudhu_marker.visible, "wudhu button and marker show")
+	var presses := 0
+	while main._wudhu_active and presses < 40:
+		main._on_wudhu_press()
+		presses += 1
+	_check(presses == 28 and not main._wudhu_active, "wudhu order completes in 28 presses")
+	_check(main._game_label.text.contains("Wudhu selesai"), "wudhu finish is celebrated")
 	print("RESULT: %s" % ("PASS" if _fails == 0 else "FAIL (%d)" % _fails))
 	quit(0 if _fails == 0 else 1)

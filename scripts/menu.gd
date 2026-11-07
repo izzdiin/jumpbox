@@ -26,12 +26,15 @@ signal join_pressed(ip: String)
 signal leave_pressed
 signal scan_pressed
 signal race_pressed
+signal hijaiyah_pressed
+signal wudhu_pressed
 signal profile_changed(profile: Dictionary)
 
 var _main_box: VBoxContainer
 var _about_box: VBoxContainer
 var _char_box: VBoxContainer
 var _net_box: VBoxContainer
+var _games_box: VBoxContainer
 
 ## The character being edited (a player.gd profile_dict). Set from main.gd;
 ## every change goes back up through profile_changed so main can apply it to
@@ -98,19 +101,19 @@ func _ready() -> void:
 	_button(main_grid, "Tentang", BLUE, _show_about, Vector2(250, 92), 32)
 	_button(main_grid, "Karakter", PURPLE, _show_char, Vector2(250, 92), 32)
 	_button(main_grid, "Main Berdua", ORANGE, _show_net, Vector2(250, 92), 32)
+	_button(main_grid, "Mini Game", Color(0.2, 0.75, 0.7), _show_games, Vector2(250, 92), 32)
 	_button(main_grid, "Keluar", RED, func(): get_tree().quit(), Vector2(250, 92), 32)
 
 	_about_box = _page(pages)
-	_label(_about_box, "JumpBox", 40)
-	_label(_about_box, "Versi " + str(ProjectSettings.get_setting("application/config/version", "?")), 26)
-	_label(_about_box, "Main tanpa internet, gratis.", 26)
-	_label(_about_box, "Dibuat oleh Yusuf\nThreads: @yusufmalikul", 30)
-	_label(_about_box, "Modifikasi oleh @iz_ddin", 26)
-	_label(_about_box, "Dibuat dengan Godot Engine (lisensi MIT).", 20)
+	_about_box.add_theme_constant_override("separation", 8)
+	_label(_about_box, "Tentang", 36)
+	_label(_about_box, "Log Perubahan\n\nYusuf (pembuat asli):\n0.4 Arena langit lebih lebar, nomor versi\n0.5 Arena lava & pintu pelangi berikon\n0.6 Lima topi pilihan di awal\n0.7 Pintu arena dipindah dari wahana\n0.8 Seluncur spiral raksasa\n0.9 Perbaikan seret kamera\n0.10 Taman air\n0.11 Suara langkah dihapus\n0.12 Pelampung & bebek apung\n0.13 Menu Tentang & Keluar\n0.14-0.16 Halaman Tentang\n0.17 Soft play indoor\n\niz_ddin (modifikasi):\n0.18 Main berdua WiFi & karakter\n0.19 Cari tuan rumah & Balap Lari\n0.20 Awal langsung buat karakter, tanpa scroll\n0.21 Arena balap coin & pratinjau karakter\n0.22 Hijaiyah Adventure & Wudhu Challenge", 15)
+	_label(_about_box, "Dibuat dengan Godot Engine (lisensi MIT).", 18)
 	_button(_about_box, "Kembali", BLUE, _show_main, Vector2(512, 68), 30)
 
 	_build_char_page(pages)
 	_build_net_page(pages)
+	_build_games_page(pages)
 	_show_main()
 
 
@@ -260,6 +263,23 @@ func _build_net_page(pages: VBoxContainer) -> void:
 			close(), Vector2(250, 68), 28)
 	_button(play_grid, "Putuskan", RED, func(): leave_pressed.emit(), Vector2(250, 68), 28)
 	_button(_net_box, "Kembali", BLUE, _show_main, Vector2(512, 68), 30)
+
+
+## The mini games page: the two learning games. The running race stays on
+## the Main Berdua page, because it needs a friend.
+func _build_games_page(pages: VBoxContainer) -> void:
+	_games_box = _page(pages)
+	_label(_games_box, "Mini Game", 36)
+	_label(_games_box, "Pilih permainan:", 22)
+	var games_grid := _grid2(_games_box)
+	_button(games_grid, "Hijaiyah\nAdventure", Color(0.2, 0.75, 0.7), func():
+		hijaiyah_pressed.emit()
+		close(), Vector2(250, 92), 26)
+	_button(games_grid, "Wudhu\nChallenge", BLUE, func():
+		wudhu_pressed.emit()
+		close(), Vector2(250, 92), 26)
+	_label(_games_box, "Balap Lari ada di halaman Main Berdua.", 20)
+	_button(_games_box, "Kembali", BLUE, _show_main, Vector2(512, 68), 30)
 
 
 func open() -> void:
@@ -454,8 +474,12 @@ func _show_net() -> void:
 	_show_only(_net_box)
 
 
+func _show_games() -> void:
+	_show_only(_games_box)
+
+
 func _show_only(box: VBoxContainer) -> void:
-	for b in [_main_box, _about_box, _char_box, _net_box]:
+	for b in [_main_box, _about_box, _char_box, _net_box, _games_box]:
 		b.visible = b == box
 
 
