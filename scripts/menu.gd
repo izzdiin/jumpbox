@@ -34,6 +34,7 @@ signal closed
 signal profile_changed(profile: Dictionary)
 
 var _main_box: VBoxContainer
+var _stars_label: Label
 var _about_box: VBoxContainer
 var _char_box: VBoxContainer
 var _net_box: VBoxContainer
@@ -104,6 +105,7 @@ func _ready() -> void:
 
 	_main_box = _page(pages)
 	_label(_main_box, "Menu", 40)
+	_stars_label = _label(_main_box, "", 26)
 	var main_grid := _grid2(_main_box)
 	_button(main_grid, "Main lagi", GREEN, close, Vector2(250, 92), 32)
 	_button(main_grid, "Tentang", BLUE, _show_about, Vector2(250, 92), 32)
@@ -120,7 +122,7 @@ func _ready() -> void:
 	_about_scroll.custom_minimum_size = Vector2(560, 452)
 	_about_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_about_box.add_child(_about_scroll)
-	var log_label := _label(_about_scroll, "Log Perubahan\n\nYusuf (pembuat asli):\n0.4 Arena langit lebih lebar, nomor versi\n0.5 Arena lava & pintu pelangi berikon\n0.6 Lima topi pilihan di awal\n0.7 Pintu arena dipindah dari wahana\n0.8 Seluncur spiral raksasa\n0.9 Perbaikan seret kamera\n0.10 Taman air\n0.11 Suara langkah dihapus\n0.12 Pelampung & bebek apung\n0.13 Menu Tentang & Keluar\n0.14-0.16 Halaman Tentang\n0.17 Soft play indoor\n\niz_ddin (modifikasi):\n0.18 Main berdua WiFi & karakter\n0.19 Cari tuan rumah & Balap Lari\n0.20 Awal langsung buat karakter, tanpa scroll\n0.21 Arena balap coin & pratinjau karakter\n0.22 Hijaiyah Adventure & Wudhu Challenge\n0.23 Tentang bergeser, wudhu pelan-pelan, hijaiyah bersama & mini zoo\n0.24 Zoo besar: jerapah, gajah, monyet, air terjun & ikan; hewan jalan sendiri; 4 kuda & penunggang duduk", 16)
+	var log_label := _label(_about_scroll, "Log Perubahan\n\nYusuf (pembuat asli):\n0.4 Arena langit lebih lebar, nomor versi\n0.5 Arena lava & pintu pelangi berikon\n0.6 Lima topi pilihan di awal\n0.7 Pintu arena dipindah dari wahana\n0.8 Seluncur spiral raksasa\n0.9 Perbaikan seret kamera\n0.10 Taman air\n0.11 Suara langkah dihapus\n0.12 Pelampung & bebek apung\n0.13 Menu Tentang & Keluar\n0.14-0.16 Halaman Tentang\n0.17 Soft play indoor\n\niz_ddin (modifikasi):\n0.18 Main berdua WiFi & karakter\n0.19 Cari tuan rumah & Balap Lari\n0.20 Awal langsung buat karakter, tanpa scroll\n0.21 Arena balap coin & pratinjau karakter\n0.22 Hijaiyah Adventure & Wudhu Challenge\n0.23 Tentang bergeser, wudhu pelan-pelan, hijaiyah bersama & mini zoo\n0.24 Zoo besar: jerapah, gajah, monyet, air terjun & ikan; hewan jalan sendiri; 4 kuda & penunggang duduk\n0.25 Sungai besar untuk berenang, mancing, niat & doa wudhu dibaca, bintang hadiah mini game", 16)
 	log_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_label(_about_box, "Dibuat dengan Godot Engine (lisensi MIT).", 18)
 	_button(_about_box, "Kembali", BLUE, _show_main, Vector2(512, 68), 30)
@@ -490,6 +492,8 @@ func _fill_choices(grid: GridContainer, names: Array, current: int, min_size: Ve
 
 
 func _show_main() -> void:
+	if _stars_label:
+		_stars_label.text = "⭐ Bintangku: %d" % Rewards.total_stars()
 	_show_only(_main_box)
 
 

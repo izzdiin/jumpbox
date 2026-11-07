@@ -95,20 +95,20 @@ func _initialize():
 	# Hijaiyah Adventure: the shown letter waits on a board in the park, and
 	# only the matching board counts.
 	main.start_hijaiyah()
-	_check(main._hij_active and main._hij_order.size() == 28, "hijaiyah adventure covers 28 letters")
+	_check(main.hijaiyah.active and main.hijaiyah.order.size() == 28, "hijaiyah adventure covers 28 letters")
 	var letters_before: Array = []
-	for tok in main._hij_tokens:
+	for tok in main.hijaiyah.tokens:
 		letters_before.append(tok["letter"])
-	main._hij_begin(main._hij_order)
+	main.hijaiyah._begin_rpc(main.hijaiyah.order)
 	var same_boards := true
-	for j in main._hij_tokens.size():
-		if main._hij_tokens[j]["letter"] != letters_before[j]:
+	for j in main.hijaiyah.tokens.size():
+		if main.hijaiyah.tokens[j]["letter"] != letters_before[j]:
 			same_boards = false
-	_check(same_boards and main._hij_pos == 0, "shared order makes the same boards")
-	var target_letter: String = main.HIJAIYAH[main._hij_order[main._hij_pos]]
+	_check(same_boards and main.hijaiyah.pos == 0, "shared order makes the same boards")
+	var target_letter: String = HijaiyahGame.HIJAIYAH[main.hijaiyah.order[main.hijaiyah.pos]]
 	var target_root: Node3D = null
 	var wrong_root: Node3D = null
-	for tok in main._hij_tokens:
+	for tok in main.hijaiyah.tokens:
 		if tok["letter"] == target_letter:
 			target_root = tok["root"]
 		else:
@@ -116,47 +116,52 @@ func _initialize():
 	_check(target_root != null and target_root.visible, "target letter board hides in the park")
 	player.teleport(wrong_root.position + Vector3(0, 0.1, 0))
 	await create_timer(0.3).timeout
-	_check(main._hij_pos == 0, "wrong letter does not count")
+	_check(main.hijaiyah.pos == 0, "wrong letter does not count")
 	player.teleport(target_root.position + Vector3(0, 0.1, 0))
 	await create_timer(0.3).timeout
-	_check(main._hij_pos == 1, "finding the letter counts")
-	main._hij_found_rpc(1)
-	_check(main._hij_pos == 2 and int(main._hij_scores.get(0, 0)) == 2, "a reported find scores and moves on")
-	main._hij_found_rpc(1)
-	_check(main._hij_pos == 2, "a stale find cannot count twice")
+	_check(main.hijaiyah.pos == 1, "finding the letter counts")
+	main.hijaiyah.found_rpc(1)
+	_check(main.hijaiyah.pos == 2 and int(main.hijaiyah.scores.get(0, 0)) == 2, "a reported find scores and moves on")
+	main.hijaiyah.found_rpc(1)
+	_check(main.hijaiyah.pos == 2, "a stale find cannot count twice")
 	main._cancel_games()
-	_check(not main._hij_active, "hijaiyah adventure stops")
+	_check(not main.hijaiyah.active, "hijaiyah adventure stops")
 
 	# Wudhu Challenge: slow presses walk the whole washing order; a fast
 	# press is warned and not counted, and the place cannot be left.
+	var stars_before := Rewards.total_stars()
 	main.start_wudhu()
-	_check(main._wudhu_active and main._wudhu_step == 0, "wudhu challenge starts at niat")
-	_check(main._wudhu_button.visible and main._wudhu_marker.visible, "wudhu button and marker show")
+	_check(main.wudhu.active and main.wudhu.step == 0, "wudhu challenge starts at niat")
+	_check(main._game_sub.text.contains("Nawaitul") and main._game_sub.text.contains("الْوُضُوءَ"),
+		"the niat is shown in Latin and Arabic to read")
+	_check(main.wudhu.button.text == "SUDAH KUBACA", "the reading step asks for a read confirmation")
+	_check(main.wudhu.button.visible and main.wudhu.marker.visible, "wudhu button and marker show")
 	main._on_wudhu_press()
-	_check(main._wudhu_step == 1, "niat counts")
+	_check(main.wudhu.step == 1, "niat counts")
 	main._on_wudhu_press()
-	_check(main._wudhu_step == 1 and main._wudhu_presses == 0
+	_check(main.wudhu.step == 1 and main.wudhu.presses == 0
 		and main._game_sub.text.contains("cepat-cepat"), "a too-fast press is warned, not counted")
-	player.teleport(main.WUDHU_POS + Vector3(9, 0.1, 0))
+	player.teleport(WudhuGame.POS + Vector3(9, 0.1, 0))
 	await create_timer(0.25).timeout
-	_check(Vector2(player.global_position.x - main.WUDHU_POS.x,
-		player.global_position.z - main.WUDHU_POS.z).length() <= 2.7,
+	_check(Vector2(player.global_position.x - WudhuGame.POS.x,
+		player.global_position.z - WudhuGame.POS.z).length() <= 2.7,
 		"the washing place cannot be left mid-wudhu")
 	var counted := 1
-	while main._wudhu_active and counted < 40:
-		main._wudhu_since_press = 99.0
+	while main.wudhu.active and counted < 40:
+		main.wudhu.since_press = 99.0
 		main._on_wudhu_press()
 		counted += 1
-	_check(counted == 28 and not main._wudhu_active, "wudhu order completes in 28 slow presses")
+	_check(counted == 28 and not main.wudhu.active, "wudhu order completes in 28 slow presses")
 	_check(main._game_label.text.contains("Wudhu selesai"), "wudhu finish is celebrated")
+	_check(Rewards.total_stars() == stars_before + 5, "finishing wudhu earns five stars")
 
 	# The big mini zoo: ten animals, four of them horses, five fish in the
 	# pond, and a monkey that starts up on its branch.
-	_check(main._zoo.size() == 10, "zoo has ten animals")
+	_check(main.zoo.animals.size() == 10, "zoo has ten animals")
 	var horses := 0
 	var monkey: Dictionary = {}
 	var cat: Dictionary = {}
-	for a in main._zoo:
+	for a in main.zoo.animals:
 		if a["kind"] == "kuda":
 			horses += 1
 		elif a["kind"] == "monyet":
@@ -164,7 +169,7 @@ func _initialize():
 		elif a["kind"] == "kucing":
 			cat = a
 	_check(horses == 4, "the zoo has four horses")
-	_check(main._fish.size() == 5, "the pond has five fish")
+	_check(main.zoo.fish.size() == 5, "the pond has five fish")
 	_check(not monkey.is_empty() and float(monkey["root"].position.y) > 1.0, "the monkey starts perched on its branch")
 	# The animals wander on their own: send the cat across the pen.
 	var cat_from: Vector3 = cat["root"].position
@@ -176,26 +181,49 @@ func _initialize():
 	cat["state"] = "idle"
 	cat["path"] = []
 	# Feeding, playing, and riding the horse you stand by.
-	var horse := main._horse_animal()
+	var horse := main.zoo.horse_animal()
 	player.teleport(horse["root"].position + Vector3(1.5, 0.1, 0))
 	await create_timer(0.25).timeout
-	_check(main._zoo_near.get("kind") == "kuda", "standing by the horse offers its buttons")
-	main._zoo_feed(main._zoo_near)
-	_check(float(main._zoo_near["feed_t"]) > 0.0 and main._zoo_near["food"].visible, "feeding shows the food")
-	main._zoo_play(main._zoo_near)
-	_check(float(main._zoo_near["play_t"]) > 0.0, "playing starts the trick")
+	_check(main.zoo.near.get("kind") == "kuda", "standing by the horse offers its buttons")
+	main.zoo.feed(main.zoo.near)
+	_check(float(main.zoo.near["feed_t"]) > 0.0 and main.zoo.near["food"].visible, "feeding shows the food")
+	main.zoo.play(main.zoo.near)
+	_check(float(main.zoo.near["play_t"]) > 0.0, "playing starts the trick")
 	await create_timer(1.4).timeout
-	main._start_riding()
-	_check(main._riding and player.mount, "riding mounts up")
-	var ridden: Dictionary = main._ridden
+	main.zoo.start_riding()
+	_check(main.zoo.riding and player.mount, "riding mounts up")
+	var ridden: Dictionary = main.zoo.ridden
 	_check(not ridden.is_empty() and not ridden["root"].visible, "the ridden horse leaves its pen self behind")
 	await create_timer(0.4).timeout
-	_check(player._legs[0].rotation.x < -1.0, "the rider sits with legs bent forward")
+	_check(player._legs[0].rotation.x > 1.0, "the rider sits with legs bent forward")
 	_check(player._mount_legs.size() == 4, "the ridden horse has four legs of its own")
 	player._pose_riding(0.6, 3.0)
 	player._pose_riding(0.6, 3.0)
 	_check(player._mount_phase > 1.0 and absf(player._mount_legs[0].rotation.x) > 0.1, "the horse's legs do the walking")
-	main._stop_riding()
-	_check(not main._riding and not player.mount and ridden["root"].visible, "climbing off brings that horse back")
+	main.zoo.stop_riding()
+	_check(not main.zoo.riding and not player.mount and ridden["root"].visible, "climbing off brings that horse back")
+
+	# The park river: deep enough to swim in, with fishing from its decks.
+	player.teleport(Vector3(-33, 0.5, 5))
+	await create_timer(1.0).timeout
+	_check(player.swim, "stepping into the river starts swimming")
+	_check(player.global_position.y > -0.75 and player.global_position.y < -0.1,
+		"the swimmer floats at water height")
+	player.teleport(Vector3(-25, 0.1, 5))
+	await create_timer(0.4).timeout
+	_check(not player.swim, "climbing out ends the swim")
+	var stars_fish := Rewards.total_stars()
+	player.teleport(Vector3(-30.2, 0.2, 2))
+	await create_timer(0.4).timeout
+	_check(not main.fishing._spot.is_empty(), "a river deck is a fishing spot")
+	main.fishing._on_press()
+	_check(main.fishing.active and main.fishing._state == 1, "casting starts the wait")
+	main.fishing._timer = 0.05
+	await create_timer(0.3).timeout
+	_check(main.fishing._state == 2, "the fish bites")
+	main.fishing._on_press()
+	_check(main.fishing._state == 3 and Rewards.total_stars() > stars_fish, "a quick pull lands the fish and its stars")
+	main._cancel_games()
+	_check(not main.fishing.active, "fishing stops with the other games")
 	print("RESULT: %s" % ("PASS" if _fails == 0 else "FAIL (%d)" % _fails))
 	quit(0 if _fails == 0 else 1)

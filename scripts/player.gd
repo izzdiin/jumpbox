@@ -69,6 +69,10 @@ var _mount_legs: Array[Node3D] = []
 var _mount_tail: Node3D
 var _mount_phase := 0.0
 var _mount_amp := 0.0
+## Swimming in the park river: main sets this while you are in the water;
+## the body then paddles at swim_y instead of walking on the bed.
+var swim := false
+var swim_y := -0.42
 var _legs: Array[Node3D] = []
 var _arms: Array[Node3D] = []
 var _hat_root: Node3D
@@ -325,9 +329,11 @@ func set_mount(on: bool) -> void:
 ## SITS — legs bent forward over the horse's sides, hands low on the
 ## reins — and the horse does the walking, legs swinging with the speed.
 func _pose_riding(delta: float, speed: float) -> void:
+	# Legs bend FORWARD over the horse's sides (positive rotation swings
+	# the downward leg toward the facing direction, -Z).
 	for i in 2:
-		_legs[i].rotation.x = lerpf(_legs[i].rotation.x, -1.35, 0.3)
-		_arms[i].rotation.x = lerpf(_arms[i].rotation.x, -0.55, 0.25)
+		_legs[i].rotation.x = lerpf(_legs[i].rotation.x, 1.3, 0.3)
+		_arms[i].rotation.x = lerpf(_arms[i].rotation.x, 0.55, 0.25)
 	if _mount_root == null:
 		return
 	if _model:
@@ -520,6 +526,20 @@ func _physics_process(delta: float) -> void:
 		return
 	if _float:
 		_ride_float()
+		return
+	if swim:
+		# Paddle around at water height; the ramps and banks are left to
+		# normal physics once main turns swim off over them.
+		var sinput := _read_move()
+		var swish := Vector3(sinput.x, 0, sinput.y).rotated(Vector3.UP, _cam_yaw)
+		var sflat := Vector3(velocity.x, 0, velocity.z)
+		sflat = sflat.move_toward(swish * WALK_SPEED * 0.55 * move_scale, 26.0 * delta)
+		velocity.x = sflat.x
+		velocity.z = sflat.z
+		velocity.y = 0.0
+		move_and_slide()
+		global_position.y = lerpf(global_position.y, swim_y, 1.0 - exp(-6.0 * delta))
+		_update_shadow()
 		return
 	var input := _read_move()
 	var wish := Vector3(input.x, 0, input.y).rotated(Vector3.UP, _cam_yaw)
@@ -727,6 +747,8 @@ func _process(delta: float) -> void:
 ## 0 walking/standing, 1 on a swing, 2 in a swim ring, 3 climbing, 4 in the
 ## air, 5 on a slide.
 func _state_code() -> int:
+	if swim:
+		return 6
 	if _seat:
 		return 1
 	if _float:
@@ -778,6 +800,10 @@ func _update_puppet(delta: float) -> void:
 	var leg_swing := 0.0
 	var arm_angle := 0.0
 	match _net_state:
+		6:  # swimming in the river: sweeping arms, kicking legs
+			_walk_time += delta * 5.0
+			leg_swing = sin(_walk_time) * 0.4
+			arm_angle = 1.1 + sin(_walk_time) * 0.45
 		1:  # on a swing: legs forward, hands on the ropes
 			leg_swing = -1.4
 			arm_angle = -2.9
@@ -851,6 +877,14 @@ func _update_model(delta: float) -> void:
 			_arms[i].rotation.x = lerpf(_arms[i].rotation.x, -2.6 + sin(_walk_time) * 0.5 * s, 0.3)
 			_legs[i].rotation.x = lerpf(_legs[i].rotation.x, -0.4 - sin(_walk_time) * 0.4 * s, 0.3)
 		return
+	if swim:
+		_walk_time += delta * (3.0 + speed * 0.7)
+		_model.rotation.x = lerpf(_model.rotation.x, 0.16, 0.2)
+		for i in 2:
+			var s := 1.0 if i == 0 else -1.0
+			_arms[i].rotation.x = lerpf(_arms[i].rotation.x, 1.15 + sin(_walk_time * 2.0) * 0.5 * s, 0.3)
+			_legs[i].rotation.x = lerpf(_legs[i].rotation.x, sin(_walk_time * 2.0 + (0.0 if i == 0 else PI)) * 0.4, 0.3)
+		return
 	if mount:
 		_pose_riding(delta, speed)
 		return
@@ -860,6 +894,7 @@ func _update_model(delta: float) -> void:
 	elif speed > 0.5:
 		_walk_time += delta * speed * 1.8
 		leg_swing = sin(_walk_time) * 0.7
+	_model.rotation.x = lerpf(_model.rotation.x, 0.0, 0.25)
 	for i in 2:
 		var s := 1.0 if i == 0 else -1.0
 		_legs[i].rotation.x = lerpf(_legs[i].rotation.x, leg_swing * s, 0.3)
