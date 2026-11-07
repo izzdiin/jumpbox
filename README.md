@@ -81,12 +81,25 @@ built the first time you enter it. This keeps the game light on older phones.
 
 ## Download
 
-📱 **[Download JumpBox.apk](https://github.com/yusufmalikul/jumpbox/releases/latest/download/JumpBox.apk)** (Android 7 or newer, 64-bit phones)
+📱 **[Download JumpBox.apk](https://github.com/izzdiin/jumpbox/releases/latest/download/JumpBox.apk)** — latest version of this fork: **v0.25** (Android 7.0 or newer, 64-bit phones, about 30 MB)
 
 Open the file on your phone to install it. Android may ask you to allow installs from
 your browser or file app, and Play Protect may warn because the app is not from the
-Play Store; choose "Install anyway". All versions are on the
-[Releases page](https://github.com/yusufmalikul/jumpbox/releases).
+Play Store; choose "Install anyway". All versions of this fork are on its
+[Releases page](https://github.com/izzdiin/jumpbox/releases).
+
+New in this fork (v0.25): a big zoo with 10 animals you can feed, play with and ride,
+a swimmable park river with three wooden decks, a fishing mini game, two learning
+games that need no reading (Hijaiyah Adventure and Wudhu Challenge — its opening
+prayer is now a reading step), and ⭐ star rewards, on top of the same-WiFi
+multiplayer for up to four phones and the running race from earlier versions. The
+full per-version changelog is in the game's **Tentang** (About) page.
+
+> This repository is a fork maintained by @iz_ddin. The original game by Yusuf
+> Malikul and its own releases live at
+> [yusufmalikul/jumpbox](https://github.com/yusufmalikul/jumpbox); its APK uses the
+> same app name but a different signing key, so it cannot be installed over this
+> fork's version (or the other way round) — uninstall the other one first.
 
 ## Controls
 
