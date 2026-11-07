@@ -150,8 +150,32 @@ func _initialize():
 	_check(counted == 28 and not main._wudhu_active, "wudhu order completes in 28 slow presses")
 	_check(main._game_label.text.contains("Wudhu selesai"), "wudhu finish is celebrated")
 
-	# The mini zoo: four animals to feed and play with, and a horse to ride.
-	_check(main._zoo.size() == 4, "zoo has four animals")
+	# The big mini zoo: ten animals, four of them horses, five fish in the
+	# pond, and a monkey that starts up on its branch.
+	_check(main._zoo.size() == 10, "zoo has ten animals")
+	var horses := 0
+	var monkey: Dictionary = {}
+	var cat: Dictionary = {}
+	for a in main._zoo:
+		if a["kind"] == "kuda":
+			horses += 1
+		elif a["kind"] == "monyet":
+			monkey = a
+		elif a["kind"] == "kucing":
+			cat = a
+	_check(horses == 4, "the zoo has four horses")
+	_check(main._fish.size() == 5, "the pond has five fish")
+	_check(not monkey.is_empty() and float(monkey["root"].position.y) > 1.0, "the monkey starts perched on its branch")
+	# The animals wander on their own: send the cat across the pen.
+	var cat_from: Vector3 = cat["root"].position
+	cat["path"] = [Vector3(-16, 0, -33)]
+	cat["target"] = cat["path"][0]
+	cat["state"] = "walk"
+	await create_timer(1.2).timeout
+	_check(cat["root"].position.distance_to(cat_from) > 0.6, "animals wander on their own")
+	cat["state"] = "idle"
+	cat["path"] = []
+	# Feeding, playing, and riding the horse you stand by.
 	var horse := main._horse_animal()
 	player.teleport(horse["root"].position + Vector3(1.5, 0.1, 0))
 	await create_timer(0.25).timeout
@@ -160,9 +184,18 @@ func _initialize():
 	_check(float(main._zoo_near["feed_t"]) > 0.0 and main._zoo_near["food"].visible, "feeding shows the food")
 	main._zoo_play(main._zoo_near)
 	_check(float(main._zoo_near["play_t"]) > 0.0, "playing starts the trick")
+	await create_timer(1.4).timeout
 	main._start_riding()
-	_check(main._riding and player.mount and not horse["root"].visible, "riding hides the pen horse and mounts up")
+	_check(main._riding and player.mount, "riding mounts up")
+	var ridden: Dictionary = main._ridden
+	_check(not ridden.is_empty() and not ridden["root"].visible, "the ridden horse leaves its pen self behind")
+	await create_timer(0.4).timeout
+	_check(player._legs[0].rotation.x < -1.0, "the rider sits with legs bent forward")
+	_check(player._mount_legs.size() == 4, "the ridden horse has four legs of its own")
+	player._pose_riding(0.6, 3.0)
+	player._pose_riding(0.6, 3.0)
+	_check(player._mount_phase > 1.0 and absf(player._mount_legs[0].rotation.x) > 0.1, "the horse's legs do the walking")
 	main._stop_riding()
-	_check(not main._riding and not player.mount and horse["root"].visible, "climbing off brings the horse back")
+	_check(not main._riding and not player.mount and ridden["root"].visible, "climbing off brings that horse back")
 	print("RESULT: %s" % ("PASS" if _fails == 0 else "FAIL (%d)" % _fails))
 	quit(0 if _fails == 0 else 1)

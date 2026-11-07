@@ -65,6 +65,10 @@ var _model: Node3D
 const MOUNT_LIFT := 0.92
 var mount := false
 var _mount_root: Node3D
+var _mount_legs: Array[Node3D] = []
+var _mount_tail: Node3D
+var _mount_phase := 0.0
+var _mount_amp := 0.0
 var _legs: Array[Node3D] = []
 var _arms: Array[Node3D] = []
 var _hat_root: Node3D
@@ -310,8 +314,33 @@ func set_mount(on: bool) -> void:
 		_mount_root.visible = true
 	elif _mount_root:
 		_mount_root.visible = false
+		_mount_root.position.y = 0.0
+		for leg in _mount_legs:
+			leg.rotation.x = 0.0
 	if _model:
 		_model.position.y = MOUNT_LIFT if on else 0.0
+
+
+## The riding pose, shared by the local player and the puppets: the kid
+## SITS — legs bent forward over the horse's sides, hands low on the
+## reins — and the horse does the walking, legs swinging with the speed.
+func _pose_riding(delta: float, speed: float) -> void:
+	for i in 2:
+		_legs[i].rotation.x = lerpf(_legs[i].rotation.x, -1.35, 0.3)
+		_arms[i].rotation.x = lerpf(_arms[i].rotation.x, -0.55, 0.25)
+	if _mount_root == null:
+		return
+	if _model:
+		_mount_root.rotation.y = _model.rotation.y
+	_mount_amp = lerpf(_mount_amp, 0.5 if speed > 0.5 else 0.0, 1.0 - exp(-8.0 * delta))
+	if speed > 0.5:
+		_mount_phase += delta * speed * 2.1
+	for j in _mount_legs.size():
+		var off := 0.0 if j == 0 or j == 3 else PI
+		_mount_legs[j].rotation.x = sin(_mount_phase + off) * _mount_amp
+	_mount_root.position.y = absf(sin(_mount_phase)) * 0.09 * (_mount_amp / 0.5) if _mount_amp > 0.01 else 0.0
+	if _mount_tail:
+		_mount_tail.rotation.y = sin(Time.get_ticks_msec() * 0.004) * 0.25
 
 
 func _build_mount_horse() -> Node3D:
@@ -329,14 +358,19 @@ func _build_mount_horse() -> Node3D:
 	U.mesh_box(horse, Vector3(0.3, 0.2, 0.22), Vector3(0, 1.36, -1.3), brown.lightened(0.12))
 	U.mesh_box(horse, Vector3(0.09, 0.18, 0.05), Vector3(-0.14, 1.62, -1.04), brown)
 	U.mesh_box(horse, Vector3(0.09, 0.18, 0.05), Vector3(0.14, 1.62, -1.04), brown)
+	_mount_legs.clear()
 	for sx in [-1.0, 1.0]:
 		for sz in [-1.0, 1.0]:
-			U.mesh_cylinder(horse, 0.06, 0.55, Vector3(0.19 * sx, 0.28, 0.58 * sz), brown.darkened(0.15))
-	var tail := Node3D.new()
-	tail.position = Vector3(0, 1.05, 0.8)
-	tail.rotation.x = -0.5
-	horse.add_child(tail)
-	U.mesh_box(tail, Vector3(0.12, 0.55, 0.12), Vector3(0, -0.26, 0), dark)
+			var pivot := Node3D.new()
+			pivot.position = Vector3(0.19 * sx, 0.55, 0.58 * sz)
+			horse.add_child(pivot)
+			U.mesh_cylinder(pivot, 0.06, 0.55, Vector3(0, -0.27, 0), brown.darkened(0.15))
+			_mount_legs.append(pivot)
+	_mount_tail = Node3D.new()
+	_mount_tail.position = Vector3(0, 1.05, 0.8)
+	_mount_tail.rotation.x = -0.5
+	horse.add_child(_mount_tail)
+	U.mesh_box(_mount_tail, Vector3(0.12, 0.55, 0.12), Vector3(0, -0.26, 0), dark)
 	return horse
 
 
@@ -737,6 +771,10 @@ func _update_puppet(delta: float) -> void:
 		else:
 			global_position = global_position.lerp(_net_pos, 1.0 - exp(-14.0 * delta))
 		_model.rotation.y = lerp_angle(_model.rotation.y, _net_yaw, 1.0 - exp(-14.0 * delta))
+	if mount:
+		_pose_riding(delta, _net_speed)
+		_update_shadow()
+		return
 	var leg_swing := 0.0
 	var arm_angle := 0.0
 	match _net_state:
@@ -812,6 +850,9 @@ func _update_model(delta: float) -> void:
 			var s := 1.0 if i == 0 else -1.0
 			_arms[i].rotation.x = lerpf(_arms[i].rotation.x, -2.6 + sin(_walk_time) * 0.5 * s, 0.3)
 			_legs[i].rotation.x = lerpf(_legs[i].rotation.x, -0.4 - sin(_walk_time) * 0.4 * s, 0.3)
+		return
+	if mount:
+		_pose_riding(delta, speed)
 		return
 	if on_slide or not is_on_floor():
 		arm_angle = -2.6  # arms up: wheee!
