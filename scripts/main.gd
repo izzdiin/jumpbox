@@ -30,11 +30,26 @@ const SETTINGS_PATH := "user://settings.cfg"
 const DISCOVERY_PORT := 8900
 const DISCOVER_MSG := "JUMPBOX_DISCOVER?"
 const HOST_MSG_PREFIX := "JUMPBOX_HOST "
-## The running race: from the start line to the finish line across the park.
+## The running race: a marked arena on the east side of the park, with a
+## start and finish arch, hurdles and blocks to dodge, and gold coins to
+## collect on the way. Places and coin counts are compared at the end.
+const RACE_CENTER_X := 28.0
+const RACE_LANE_X: Array[float] = [25.6, 27.2, 28.8, 30.4]
 const RACE_START_Z := 30.0
 const RACE_FINISH_Z := -32.0
 const RACE_COUNTDOWN := 3.0
-const RACE_TIMEOUT := 30.0
+const RACE_TIMEOUT := 45.0
+const RACE_RESULTS_TIME := 10.0
+const RACE_COIN_Y := 1.0
+const GOLD := Color(1.0, 0.8, 0.15)
+const GOLD_LIGHT := Color(1.0, 0.9, 0.45)
+## Coin spots as [x, z] pairs, in the gaps between the obstacle rows.
+const RACE_COIN_SPOTS := [
+	[25.6, 26.0], [28.8, 26.0], [27.2, 20.0], [30.4, 20.0],
+	[25.6, 14.0], [28.8, 14.0], [30.4, 8.0], [27.2, 8.0],
+	[25.6, 2.0], [28.8, 2.0], [30.4, -4.0], [27.2, -10.0],
+	[25.6, -16.0], [28.8, -22.0], [30.4, -28.0], [27.2, -28.0],
+]
 
 const GRASS := Color(0.42, 0.78, 0.35)
 const SAND := Color(0.96, 0.86, 0.6)
@@ -72,6 +87,12 @@ var _race_total := 0
 var _race_finishers: Array[int] = []
 var _race_banner: Label
 var _banner_timer := 0.0
+var _race_results: Label
+var _results_timer := 0.0
+var _race_coins: Array[Dictionary] = []
+var _race_obstacles: Array[Node] = []
+var _race_coin_counts := {}
+var _race_names := {}
 
 
 func _ready() -> void:
@@ -82,6 +103,7 @@ func _ready() -> void:
 	add_child(_park)
 	_build_ground()
 	_build_fence()
+	_build_race_arena()
 	_build_trampolines()
 	_build_slide(Vector3(7, 0, -2), 2.6, RAINBOW[4])
 	_build_slide(Vector3(15, 0, 0), 5.0, RAINBOW[0])
@@ -157,6 +179,19 @@ func _ready() -> void:
 	_race_banner.add_theme_constant_override("outline_size", 18)
 	_race_banner.visible = false
 	layer.add_child(_race_banner)
+
+	_race_results = Label.new()
+	_race_results.anchor_left = 0.0
+	_race_results.anchor_right = 1.0
+	_race_results.offset_top = 196
+	_race_results.offset_bottom = 580
+	_race_results.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_race_results.add_theme_font_size_override("font_size", 36)
+	_race_results.add_theme_color_override("font_color", Color.WHITE)
+	_race_results.add_theme_color_override("font_outline_color", Color(0.1, 0.1, 0.15))
+	_race_results.add_theme_constant_override("outline_size", 12)
+	_race_results.visible = false
+	layer.add_child(_race_results)
 
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--shot="):
@@ -358,6 +393,108 @@ func _build_fence() -> void:
 			post += 3.0
 
 
+## --- The race arena -----------------------------------------------------------
+## A permanent running track on the east side of the park: a start arch and a
+## finish arch, lane lines, hurdles, blocks and cones to dodge, and gold coins
+## that only show up while a race is on.
+
+func _build_race_arena() -> void:
+	# The track surface and its edges.
+	U.mesh_box(_park, Vector3(8.4, 0.04, 70.0), Vector3(RACE_CENTER_X, 0.02, -1.0), Color(0.83, 0.86, 0.9))
+	for side: float in [-1.0, 1.0]:
+		U.mesh_box(_park, Vector3(0.35, 0.05, 70.0), Vector3(RACE_CENTER_X + side * 4.2, 0.025, -1.0), WHITE)
+	# Lane lines between the four lanes.
+	for bx in [24.8, 26.4, 28.0, 29.6, 31.2]:
+		U.mesh_box(_park, Vector3(0.08, 0.045, 62.0), Vector3(bx, 0.022, -1.0), Color(1, 1, 1, 0.55))
+	_build_race_line(RACE_START_Z)
+	_build_race_line(RACE_FINISH_Z)
+	_build_race_arch(RACE_START_Z, RAINBOW[3], "START")
+	_build_race_arch(RACE_FINISH_Z, RAINBOW[0], "FINISH")
+	# Obstacle rows. Every row leaves a way through: a free lane or a low
+	# hurdle you can jump.
+	_race_hurdle(RACE_LANE_X[0], 23.0)
+	_race_hurdle(RACE_LANE_X[2], 23.0)
+	_race_block(RACE_LANE_X[1], 17.0)
+	_race_hurdle(RACE_LANE_X[3], 17.0)
+	_race_cone(RACE_LANE_X[0], 11.0)
+	_race_hurdle(RACE_LANE_X[2], 11.0)
+	_race_cone(RACE_LANE_X[3], 11.0)
+	_race_hurdle(RACE_LANE_X[0], 5.0)
+	_race_block(RACE_LANE_X[2], 5.0)
+	_race_hurdle(RACE_LANE_X[1], -1.0)
+	_race_hurdle(RACE_LANE_X[3], -1.0)
+	_race_block(RACE_LANE_X[0], -7.0)
+	_race_cone(RACE_LANE_X[2], -7.0)
+	_race_hurdle(RACE_LANE_X[0], -13.0)
+	_race_hurdle(RACE_LANE_X[1], -13.0)
+	_race_hurdle(RACE_LANE_X[2], -13.0)
+	_race_hurdle(RACE_LANE_X[1], -19.0)
+	_race_block(RACE_LANE_X[3], -19.0)
+	_race_cone(RACE_LANE_X[1], -25.0)
+	_race_cone(RACE_LANE_X[2], -25.0)
+	_race_hurdle(RACE_LANE_X[3], -25.0)
+	# The coins, hidden until a race starts.
+	for spot in RACE_COIN_SPOTS:
+		_build_race_coin(Vector3(float(spot[0]), RACE_COIN_Y, float(spot[1])))
+
+
+## A chequered start/finish line across the track.
+func _build_race_line(z: float) -> void:
+	for i in 8:
+		var c := Color(0.12, 0.12, 0.14) if i % 2 == 0 else WHITE
+		U.mesh_box(_park, Vector3(0.8, 0.045, 0.9), Vector3(24.8 + 0.4 + i * 0.8, 0.023, z), c)
+
+
+## Two posts and a beam over the track, with a floating word on top.
+func _build_race_arch(z: float, color: Color, word: String) -> void:
+	for side: float in [-1.0, 1.0]:
+		U.block(_park, Vector3(0.4, 3.4, 0.4), Vector3(RACE_CENTER_X + side * 3.9, 1.7, z), color)
+	U.mesh_box(_park, Vector3(8.2, 0.55, 0.45), Vector3(RACE_CENTER_X, 3.55, z), color)
+	var label := Label3D.new()
+	label.text = word
+	label.font_size = 128
+	label.pixel_size = 0.008
+	label.modulate = WHITE
+	label.outline_size = 24
+	label.outline_modulate = Color(0.1, 0.1, 0.15)
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.position = Vector3(RACE_CENTER_X, 4.5, z)
+	_park.add_child(label)
+
+
+## A low bar you jump over.
+func _race_hurdle(x: float, z: float) -> void:
+	var body := U.block(_park, Vector3(1.5, 0.55, 0.35), Vector3(x, 0.275, z), RAINBOW[1])
+	U.mesh_box(body, Vector3(1.5, 0.14, 0.37), Vector3(0, 0.12, 0), WHITE)
+	_race_obstacles.append(body)
+
+
+## A tall block you run around.
+func _race_block(x: float, z: float) -> void:
+	_race_obstacles.append(U.block(_park, Vector3(1.4, 1.05, 0.7), Vector3(x, 0.525, z), RAINBOW[5]))
+
+
+## A traffic cone you dodge.
+func _race_cone(x: float, z: float) -> void:
+	var body := U.solid_cylinder(_park, 0.42, 0.85, Vector3(x, 0.425, z), RAINBOW[0])
+	U.mesh_cylinder(body, 0.43, 0.14, Vector3(0, 0.05, 0), WHITE)
+	_race_obstacles.append(body)
+
+
+## One gold coin: a spinning disc, so it can bob and turn while the race
+## runs. Hidden until a race starts.
+func _build_race_coin(pos: Vector3) -> void:
+	var coin := Node3D.new()
+	coin.position = pos
+	coin.visible = false
+	_park.add_child(coin)
+	var disc := U.mesh_cylinder(coin, 0.42, 0.1, Vector3.ZERO, GOLD)
+	disc.rotation.x = PI * 0.5
+	var face := U.mesh_cylinder(coin, 0.26, 0.12, Vector3.ZERO, GOLD_LIGHT)
+	face.rotation.x = PI * 0.5
+	_race_coins.append({"node": coin, "pos": pos, "taken": false})
+
+
 func _build_trampoline(pos: Vector3, radius: float, power: float, color: Color) -> void:
 	U.solid_cylinder(_park, radius, 0.6, pos + Vector3(0, 0.3, 0), color)
 	var pad := U.solid_cylinder(_park, radius - 0.3, 0.1, pos + Vector3(0, 0.62, 0), Color(0.15, 0.15, 0.2))
@@ -517,6 +654,9 @@ func _build_trees() -> void:
 	var placed := 0
 	while placed < 26:
 		var p := Vector3(rng.randf_range(-34, 34), 0, rng.randf_range(-34, 34))
+		# Keep the race arena corridor clear.
+		if absf(p.x - RACE_CENTER_X) < 5.5 and p.z > -37.0 and p.z < 35.0:
+			continue
 		# Keep trees near the edges, away from the rides.
 		if absf(p.x) < 25 and absf(p.z) < 26:
 			continue
@@ -604,6 +744,11 @@ func _end_session(message: String) -> void:
 		_race_state = 0
 		_player.move_scale = 1.0
 		_race_banner.visible = false
+	if _race_results:
+		_race_results.visible = false
+	_results_timer = 0.0
+	for c in _race_coins:
+		c["node"].visible = false
 	for id in _puppets:
 		_puppets[id].queue_free()
 	_puppets.clear()
@@ -775,9 +920,11 @@ func _poll_discovery() -> void:
 
 
 ## --- The running race ---------------------------------------------------------
-## Anyone in the game can start it for everyone: all players are lined up
-## across the park, counted down, and race to the far fence. Places are
-## shared as each runner crosses the finish line.
+## Anyone in the game can start it for everyone: all players are lined up in
+## the arena lanes, counted down, and race from the start arch to the finish
+## arch, jumping hurdles and collecting coins on the way. Places and coin
+## counts are shared as they happen, and compared on the results board when
+## the race ends.
 
 func _on_race_pressed() -> void:
 	if not _net_active:
@@ -795,8 +942,18 @@ func _race_start() -> void:
 	var ids := _race_ids()
 	_race_total = ids.size()
 	_race_finishers.clear()
+	_race_coin_counts.clear()
+	_race_names.clear()
+	for id in ids:
+		_race_coin_counts[id] = 0
+		_race_names[id] = _name_for_id(id)
+	for c in _race_coins:
+		c["taken"] = false
+		c["node"].visible = true
+	_race_results.visible = false
+	_results_timer = 0.0
 	var slot := ids.find(_my_id())
-	var x := (float(slot) - float(ids.size() - 1) / 2.0) * 1.6
+	var x: float = RACE_LANE_X[clampi(slot, 0, RACE_LANE_X.size() - 1)]
 	_player.teleport(Vector3(x, 0.1, RACE_START_Z))
 	_player.look_toward(Vector3(0, 0, -1))
 	_player.move_scale = 0.0
@@ -807,14 +964,64 @@ func _race_start() -> void:
 
 
 @rpc("any_peer", "reliable", "call_local")
-func _race_finish() -> void:
+func _race_finish(coins: int) -> void:
 	var id := multiplayer.get_remote_sender_id()
 	if id == 0:
 		id = multiplayer.get_unique_id()
+	_apply_coin(id, coins)
 	_apply_finish(id)
 
 
+## A runner tells everyone how many coins they hold now, so the end-of-race
+## comparison can include them.
+@rpc("any_peer", "reliable", "call_local")
+func _race_coin(total: int) -> void:
+	var id := multiplayer.get_remote_sender_id()
+	if id == 0:
+		id = multiplayer.get_unique_id()
+	_apply_coin(id, total)
+
+
+func _apply_coin(id: int, total: int) -> void:
+	if _race_state == 0:
+		return
+	_race_coin_counts[id] = total
+	if not _race_names.has(id):
+		_race_names[id] = _name_for_id(id)
+
+
+## Pick up the coins the local runner touches.
+func _collect_coins() -> void:
+	var my := _my_id()
+	for c in _race_coins:
+		if c["taken"]:
+			continue
+		var p: Vector3 = c["pos"]
+		var flat := Vector2(_player.global_position.x - p.x, _player.global_position.z - p.z).length()
+		if flat < 1.0 and absf(_player.global_position.y + 1.0 - RACE_COIN_Y) < 1.6:
+			c["taken"] = true
+			c["node"].visible = false
+			_sound.play("checkpoint", -6.0)
+			var total := int(_race_coin_counts.get(my, 0)) + 1
+			if _net_active:
+				rpc("_race_coin", total)
+			else:
+				_apply_coin(my, total)
+
+
 func _race_process(delta: float) -> void:
+	if _results_timer > 0.0:
+		_results_timer -= delta
+		if _results_timer <= 0.0 and _race_results:
+			_race_results.visible = false
+	# Coins spin and bob while they are on show.
+	if _race_state != 0:
+		var t := Time.get_ticks_msec() * 0.001
+		for i in _race_coins.size():
+			var c := _race_coins[i]
+			if not c["taken"]:
+				c["node"].rotation.y = t * 3.0 + float(i) * 0.7
+				c["node"].position.y = RACE_COIN_Y + sin(t * 2.2 + float(i)) * 0.12
 	if _banner_timer > 0.0:
 		_banner_timer -= delta
 		if _banner_timer <= 0.0 and _race_state != 1:
@@ -831,10 +1038,11 @@ func _race_process(delta: float) -> void:
 			_banner_timer = 1.0
 	elif _race_state == 2:
 		_race_timer -= delta
+		_collect_coins()
 		var my := _my_id()
 		if not _race_finishers.has(my) and _player.global_position.z <= RACE_FINISH_Z:
 			if _net_active:
-				rpc("_race_finish")
+				rpc("_race_finish", int(_race_coin_counts.get(my, 0)))
 			else:
 				_apply_finish(my)
 		if _race_state == 2 and _race_timer <= 0.0:
@@ -860,13 +1068,55 @@ func _apply_finish(id: int) -> void:
 
 
 func _end_race() -> void:
-	if not _race_finishers.is_empty():
-		_show_banner("Pemenang: %s. Balap selesai!" % _name_for_id(_race_finishers[0]))
-	else:
-		_show_banner("Balap selesai.")
-	_banner_timer = 4.0
 	_race_state = 0
 	_player.move_scale = 1.0
+	_race_banner.visible = false
+	for c in _race_coins:
+		c["node"].visible = false
+	if not _race_finishers.is_empty():
+		_sound.play("fanfare")
+	_race_results.text = _race_results_text()
+	_race_results.visible = true
+	_results_timer = RACE_RESULTS_TIME
+
+
+## The comparison shown when a race ends: places first, then everyone who
+## did not finish, with the coin counts side by side and the coin champion
+## named at the bottom.
+func _race_results_text() -> String:
+	var lines: Array[String] = ["HASIL BALAP LARI"]
+	var place := 0
+	for id in _race_finishers:
+		place += 1
+		lines.append("%d. %s — %d koin" % [place, _race_name(id), int(_race_coin_counts.get(id, 0))])
+	var rest: Array[int] = []
+	for key in _race_coin_counts:
+		if not _race_finishers.has(int(key)):
+			rest.append(int(key))
+	rest.sort_custom(func(a: int, b: int):
+		return int(_race_coin_counts.get(a, 0)) > int(_race_coin_counts.get(b, 0)))
+	for id in rest:
+		lines.append("%s — %d koin (belum finish)" % [_race_name(id), int(_race_coin_counts.get(id, 0))])
+	var best := 0
+	var champs: Array[String] = []
+	for key in _race_coin_counts:
+		var n := int(_race_coin_counts[key])
+		if n > best:
+			best = n
+			champs = [_race_name(int(key))]
+		elif n == best and n > 0:
+			champs.append(_race_name(int(key)))
+	if best > 0:
+		lines.append("Koin terbanyak: %s (%d)" % [", ".join(champs), best])
+	return "\n".join(lines)
+
+
+func _race_name(id: int) -> String:
+	if _race_names.has(id):
+		var nm: String = _race_names[id]
+		if nm != "":
+			return nm
+	return _name_for_id(id)
 
 
 func _my_id() -> int:

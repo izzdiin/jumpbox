@@ -9,6 +9,7 @@ extends Control
 ## character yet, the game opens straight on the Karakter page.
 
 const PlayerScript := preload("res://scripts/player.gd")
+const U := preload("res://scripts/util.gd")
 
 const BG := Color(0.1, 0.15, 0.3, 0.6)
 const CARD := Color(1, 1, 1, 0.95)
@@ -55,6 +56,9 @@ var _face_grid: GridContainer
 var _hijab_button: Button
 var _hijab_color_box: VBoxContainer
 var _hijab_color_grid: GridContainer
+## The live 3D preview on the character page and its little world.
+var _preview_player: Node
+var _preview_view: SubViewport
 
 var _net_status: Label
 var _join_section: VBoxContainer
@@ -153,6 +157,12 @@ func _build_char_page(pages: VBoxContainer) -> void:
 	_label(_hijab_color_box, "Warna Jilbab", 22)
 	_hijab_color_grid = _grid(_hijab_color_box, 4)
 
+	var preview_col := _column(cols, false)
+	preview_col.custom_minimum_size = Vector2(216, 0)
+	_label(preview_col, "Pratinjau", 22)
+	_build_preview(preview_col)
+	_label(preview_col, "Langsung berubah\nsaat diganti.", 16)
+
 	_button(_char_box, "Kembali", BLUE, func():
 		_commit_name()
 		if _onboarding:
@@ -160,6 +170,63 @@ func _build_char_page(pages: VBoxContainer) -> void:
 			close()
 		else:
 			_show_main(), Vector2(612, 72), 30)
+
+
+## A live 3D preview of the character being edited, in its own little world
+## inside the menu. Every pick on this page is applied to it at once, so you
+## see the new look before you go back to the game.
+func _build_preview(parent: VBoxContainer) -> void:
+	var view := SubViewportContainer.new()
+	view.custom_minimum_size = Vector2(216, 330)
+	view.stretch = true
+	parent.add_child(view)
+	var vp := SubViewport.new()
+	vp.own_world_3d = true
+	vp.render_target_update_mode = SubViewport.UPDATE_WHEN_VISIBLE
+	vp.process_mode = Node.PROCESS_MODE_ALWAYS
+	view.add_child(vp)
+	_preview_view = vp
+	var world := Node3D.new()
+	world.process_mode = Node.PROCESS_MODE_ALWAYS
+	vp.add_child(world)
+	var env := Environment.new()
+	env.background_mode = Environment.BG_COLOR
+	env.background_color = Color(0.62, 0.8, 1.0)
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color(1, 1, 1)
+	env.ambient_light_energy = 0.85
+	var world_env := WorldEnvironment.new()
+	world_env.environment = env
+	world.add_child(world_env)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-50, -30, 0)
+	world.add_child(sun)
+	U.solid_cylinder(world, 1.7, 0.16, Vector3(0, -0.08, 0), Color(0.42, 0.78, 0.35))
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 1.42, -3.7)
+	world.add_child(cam)
+	cam.look_at(Vector3(0, 0.95, 0), Vector3.UP)
+	cam.current = true
+	var p := PlayerScript.new()
+	p.is_remote = true
+	p.process_mode = Node.PROCESS_MODE_ALWAYS
+	world.add_child(p)
+	_preview_player = p
+
+
+## Show the profile being edited on the preview character.
+func _update_preview() -> void:
+	if _preview_player == null or _profile.is_empty():
+		return
+	_preview_player.apply_profile(_profile)
+	if _preview_player._name_label:
+		_preview_player._name_label.visible = false
+
+
+## A gentle sway for the preview character while the page is open.
+func _process(_delta: float) -> void:
+	if _preview_player and visible and _char_box.visible:
+		_preview_player._model.rotation.y = sin(Time.get_ticks_msec() * 0.0012) * 0.35
 
 
 func _build_net_page(pages: VBoxContainer) -> void:
@@ -326,6 +393,7 @@ func _refresh_char() -> void:
 	_hijab_color_box.visible = hijab
 	# A hijab covers the hair, so the hair pickers hide while it is worn.
 	_hair_section.visible = not hijab
+	_update_preview()
 
 
 ## The closest entry in a colour palette (saved colours come back from

@@ -33,6 +33,12 @@ func _initialize():
 	_check(player.wear_hijab, "hijab picked in the menu")
 	_check(player.profile_dict().has("face"), "profile carries the face")
 
+	# The live preview on the character page wears the same look at once.
+	_check(menu._preview_player != null, "character page has a preview")
+	_check(menu._preview_player.face_style == 3 and menu._preview_player.wear_hijab,
+		"preview follows face and hijab picks")
+	_check(menu._preview_player.shirt_color == player.shirt_color, "preview wears the same shirt")
+
 	# A new player reads the same look back from the phone's settings file.
 	var fresh = load("res://scripts/player.gd").new()
 	root.add_child(fresh)
@@ -59,13 +65,31 @@ func _initialize():
 	main._despawn_puppet(42)
 	_check(not main._puppets.has(42), "puppet leaves with its owner")
 
+	# The arena is built: lanes of obstacles and a set of coins per race.
+	_check(main._race_obstacles.size() >= 12, "race arena has obstacles")
+	_check(main._race_coins.size() == 16, "race arena has coins")
+
 	# A solo practice race: the countdown holds you, then you run to the line.
 	main._race_start()
 	_check(main._race_state == 1 and player.move_scale == 0.0, "race countdown holds the player")
+	_check(player.global_position.x == main.RACE_LANE_X[0] and player.global_position.z == main.RACE_START_Z,
+		"race lines you up in a start lane")
+	_check(main._race_coins[0]["node"].visible, "coins appear for the race")
 	await create_timer(3.4).timeout
 	_check(main._race_state == 2 and player.move_scale == 1.0, "race starts after the countdown")
-	player.teleport(Vector3(0, 0.1, main.RACE_FINISH_Z - 1.0))
+	# Step onto the first coin: it is collected and counted.
+	var spot: Vector3 = main._race_coins[0]["pos"]
+	player.teleport(Vector3(spot.x, 0.1, spot.z))
+	await create_timer(0.3).timeout
+	_check(main._race_coins[0]["taken"] and not main._race_coins[0]["node"].visible, "coin is collected")
+	_check(int(main._race_coin_counts.get(0, 0)) == 1, "coin count is kept")
+	player.teleport(Vector3(main.RACE_CENTER_X, 0.1, main.RACE_FINISH_Z - 1.0))
 	await create_timer(0.3).timeout
 	_check(main._race_finishers.size() == 1 and main._race_state == 0, "crossing the line ends the race")
+	# The results board compares places and coins.
+	_check(main._race_results.visible and main._race_results.text.contains("HASIL BALAP LARI"),
+		"results board shows after the race")
+	_check(main._race_results.text.contains("Sari") and main._race_results.text.contains("1 koin"),
+		"results compare the coin counts")
 	print("RESULT: %s" % ("PASS" if _fails == 0 else "FAIL (%d)" % _fails))
 	quit(0 if _fails == 0 else 1)
