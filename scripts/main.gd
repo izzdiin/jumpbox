@@ -75,6 +75,14 @@ const WUDHU_STEPS := [
 	{"name": "Membasuh kaki kiri sampai mata kaki", "part": Vector3(-0.28, 0.3, -0.2), "times": 3, "btn": "AIR!"},
 	{"name": "Doa sesudah wudhu", "part": Vector3(0, 2.0, -0.3), "times": 1, "btn": "DOA"},
 ]
+## Wudhu is done slowly: presses faster than this gap are not counted, and
+## the washing place may not be left until the order is finished.
+const WUDHU_PRESS_GAP := 0.9
+const WUDHU_AREA_R := 2.4
+
+## The mini zoo pen in the park's far corner.
+const ZOO_CENTER := Vector3(-29, 0, -29)
+const ZOO_HORSE_HOME := Vector3(-32.5, 0, -31.5)
 
 const GRASS := Color(0.42, 0.78, 0.35)
 const SAND := Color(0.96, 0.86, 0.6)
@@ -134,6 +142,24 @@ var _wudhu_marker: MeshInstance3D
 var _wudhu_active := false
 var _wudhu_step := 0
 var _wudhu_presses := 0
+var _wudhu_since_press := 99.0
+var _wudhu_warn := 0.0
+
+## The game prompts live on their own canvas layer under the menu, so
+## opening the menu hides them all at once.
+var _game_layer: CanvasLayer
+## Hijaiyah played together: one shared hunt, one score per player.
+var _hij_scores := {}
+var _hij_names := {}
+
+## The mini zoo: the animals, the one you are standing by, its three big
+## buttons, and whether you are on the horse.
+var _zoo: Array[Dictionary] = []
+var _zoo_near: Dictionary = {}
+var _zoo_feed_button: Button
+var _zoo_play_button: Button
+var _zoo_ride_button: Button
+var _riding := false
 
 
 func _ready() -> void:
@@ -147,6 +173,7 @@ func _ready() -> void:
 	_build_race_arena()
 	_build_wudhu_station()
 	_build_hijaiyah_tokens()
+	_build_zoo()
 	_build_trampolines()
 	_build_slide(Vector3(7, 0, -2), 2.6, RAINBOW[4])
 	_build_slide(Vector3(15, 0, 0), 5.0, RAINBOW[0])
@@ -195,6 +222,15 @@ func _ready() -> void:
 	menu.race_pressed.connect(_on_race_pressed)
 	menu.hijaiyah_pressed.connect(start_hijaiyah)
 	menu.wudhu_pressed.connect(start_wudhu)
+	menu.end_game_pressed.connect(_cancel_games)
+	menu.opened.connect(func():
+		_game_layer.visible = false
+		if _wudhu_marker:
+			_wudhu_marker.visible = false)
+	menu.closed.connect(func():
+		_game_layer.visible = true
+		if _wudhu_marker and _wudhu_active:
+			_wudhu_marker.visible = true)
 	menu.profile_changed.connect(_on_profile_changed)
 	menu.set_profile(_player.profile_dict())
 	menu.set_net_status("Tidak terhubung. Main sendiri.")
@@ -241,7 +277,12 @@ func _ready() -> void:
 	# Prompts for the two learning games: one big line (the letter to find or
 	# the wudhu step), a smaller progress line under it, one huge button for
 	# the washing steps, and a glowing blue marker that rides on the part of
-	# the character being washed.
+	# the character being washed. They live on their own layer under the
+	# menu layer, and the layer hides while the menu is open.
+	_game_layer = CanvasLayer.new()
+	_game_layer.layer = 0
+	add_child(_game_layer)
+
 	_game_label = Label.new()
 	_game_label.anchor_left = 0.0
 	_game_label.anchor_right = 1.0
@@ -253,20 +294,20 @@ func _ready() -> void:
 	_game_label.add_theme_color_override("font_outline_color", Color(0.1, 0.1, 0.15))
 	_game_label.add_theme_constant_override("outline_size", 14)
 	_game_label.visible = false
-	layer.add_child(_game_label)
+	_game_layer.add_child(_game_label)
 
 	_game_sub = Label.new()
 	_game_sub.anchor_left = 0.0
 	_game_sub.anchor_right = 1.0
 	_game_sub.offset_top = 168
-	_game_sub.offset_bottom = 214
+	_game_sub.offset_bottom = 238
 	_game_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_game_sub.add_theme_font_size_override("font_size", 30)
+	_game_sub.add_theme_font_size_override("font_size", 28)
 	_game_sub.add_theme_color_override("font_color", Color.WHITE)
 	_game_sub.add_theme_color_override("font_outline_color", Color(0.1, 0.1, 0.15))
 	_game_sub.add_theme_constant_override("outline_size", 10)
 	_game_sub.visible = false
-	layer.add_child(_game_sub)
+	_game_layer.add_child(_game_sub)
 
 	_wudhu_button = Button.new()
 	_wudhu_button.anchor_left = 0.5
@@ -290,7 +331,25 @@ func _ready() -> void:
 	_wudhu_button.add_theme_stylebox_override("pressed", sbp)
 	_wudhu_button.visible = false
 	_wudhu_button.pressed.connect(_on_wudhu_press)
-	layer.add_child(_wudhu_button)
+	_game_layer.add_child(_wudhu_button)
+
+	# The zoo buttons: feed and play side by side, ride above them. They only
+	# show while you stand by an animal (or sit on the horse).
+	_zoo_feed_button = _big_button("Beri Makan", Color(0.35, 0.75, 0.35), -248, -8)
+	_zoo_feed_button.pressed.connect(func(): _zoo_feed(_zoo_near))
+	_game_layer.add_child(_zoo_feed_button)
+	_zoo_play_button = _big_button("Ajak Main", Color(0.6, 0.45, 0.9), 8, 248)
+	_zoo_play_button.pressed.connect(func(): _zoo_play(_zoo_near))
+	_game_layer.add_child(_zoo_play_button)
+	_zoo_ride_button = _big_button("Naik Kuda", Color(1.0, 0.6, 0.15), -125, 125)
+	_zoo_ride_button.offset_top = -316
+	_zoo_ride_button.offset_bottom = -224
+	_zoo_ride_button.pressed.connect(func():
+		if _riding:
+			_stop_riding()
+		else:
+			_start_riding())
+	_game_layer.add_child(_zoo_ride_button)
 
 	var sphere := SphereMesh.new()
 	sphere.radius = 0.17
@@ -316,6 +375,7 @@ func _enter_course(course_name: String) -> void:
 	if _active:
 		return
 	_cancel_games()
+	_stop_riding(true)
 	var course: Node = _courses.get(course_name)
 	if course == null:
 		var info: Dictionary = COURSES[course_name]
@@ -338,6 +398,12 @@ func _skip_stage(step: int) -> void:
 
 
 func _go_home() -> void:
+	if _wudhu_active:
+		# Wudhu is finished where it started: the home trip waits, and you
+		# are simply put back at the washing place.
+		_player.teleport(WUDHU_POS + Vector3(0, 0.1, 0))
+		_player.look_toward(Vector3(0, 0, 1))
+		return
 	_cancel_games()
 	if _active:
 		_active.leave()
@@ -436,6 +502,7 @@ func _process(delta: float) -> void:
 	_poll_scan()
 	_race_process(delta)
 	_games_process(delta)
+	_zoo_process(delta)
 	for icon in _icons:
 		icon.rotation.y += delta * 1.2
 		icon.position.y += sin(Time.get_ticks_msec() * 0.003) * delta * 0.3
@@ -770,6 +837,9 @@ func _build_trees() -> void:
 		# Keep the race arena corridor clear.
 		if absf(p.x - RACE_CENTER_X) < 5.5 and p.z > -37.0 and p.z < 35.0:
 			continue
+		# And the zoo pen.
+		if p.x > -37.5 and p.x < -20.5 and p.z > -36.5 and p.z < -21.5:
+			continue
 		# Keep trees near the edges, away from the rides.
 		if absf(p.x) < 25 and absf(p.z) < 26:
 			continue
@@ -844,6 +914,358 @@ func net_join(ip: String) -> void:
 	print("NET: joining ", ip)
 
 
+## --- The mini zoo -------------------------------------------------------------
+## A fenced pen with a horse, a rabbit, a cat and a small dinosaur. Stand
+## by one and its buttons appear: feed it, play with it. The horse can be
+## ridden — it trots along under you, a little faster than running, also in
+## a race — and the other phones see the horse through your profile.
+
+const HEART_COLORS: Array[Color] = [Color(0.95, 0.45, 0.75), Color(0.95, 0.3, 0.3), Color(1, 1, 1)]
+
+
+func _big_button(text: String, color: Color, left: float, right: float) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.anchor_left = 0.5
+	b.anchor_right = 0.5
+	b.anchor_top = 1.0
+	b.anchor_bottom = 1.0
+	b.offset_left = left
+	b.offset_right = right
+	b.offset_top = -204
+	b.offset_bottom = -96
+	b.add_theme_font_size_override("font_size", 32)
+	b.add_theme_color_override("font_color", Color.WHITE)
+	for st in ["normal", "hover"]:
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = color
+		sb.set_corner_radius_all(28)
+		b.add_theme_stylebox_override(st, sb)
+	var sbp := StyleBoxFlat.new()
+	sbp.bg_color = color.darkened(0.25)
+	sbp.set_corner_radius_all(28)
+	b.add_theme_stylebox_override("pressed", sbp)
+	b.visible = false
+	return b
+
+
+func _zoo_sphere(parent: Node3D, r: float, pos: Vector3, color: Color) -> MeshInstance3D:
+	var m := MeshInstance3D.new()
+	var s := SphereMesh.new()
+	s.radius = r
+	s.height = r * 2.0
+	s.radial_segments = 18
+	s.rings = 9
+	m.mesh = s
+	m.material_override = U.mat(color)
+	m.position = pos
+	parent.add_child(m)
+	return m
+
+
+func _zoo_sign(root: Node3D, text: String, y: float) -> void:
+	var label := Label3D.new()
+	label.text = text
+	label.font_size = 96
+	label.pixel_size = 0.005
+	label.modulate = WHITE
+	label.outline_size = 16
+	label.outline_modulate = Color(0.1, 0.1, 0.15)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.position = Vector3(0, y, 0)
+	root.add_child(label)
+
+
+func _build_zoo() -> void:
+	U.mesh_box(_park, Vector3(13.6, 0.04, 11.6), ZOO_CENTER + Vector3(0, 0.02, 0), SAND)
+	var post_col := Color(0.85, 0.7, 0.45)
+	var x0 := -36.0
+	var x1 := -22.0
+	var z0 := -35.0
+	var z1 := -23.0
+	var posts: Array[Vector3] = []
+	var px := x0
+	while px <= x1:
+		posts.append(Vector3(px, 0, z0))
+		posts.append(Vector3(px, 0, z1))
+		px += 2.0
+	var pz := z0 + 2.0
+	while pz < z1:
+		posts.append(Vector3(x0, 0, pz))
+		if pz < -30.6 or pz > -27.4:
+			posts.append(Vector3(x1, 0, pz))
+		pz += 2.0
+	for p in posts:
+		U.block(_park, Vector3(0.12, 1.0, 0.12), p + Vector3(0, 0.5, 0), post_col)
+	for y in [0.45, 0.85]:
+		U.block(_park, Vector3(x1 - x0, 0.07, 0.07), Vector3((x0 + x1) / 2, y, z0), post_col)
+		U.block(_park, Vector3(x1 - x0, 0.07, 0.07), Vector3((x0 + x1) / 2, y, z1), post_col)
+		U.block(_park, Vector3(0.07, 0.07, z1 - z0), Vector3(x0, y, (z0 + z1) / 2), post_col)
+		U.block(_park, Vector3(0.07, 0.07, 4.4), Vector3(x1, y, -32.8), post_col)
+		U.block(_park, Vector3(0.07, 0.07, 4.4), Vector3(x1, y, -25.2), post_col)
+	# A hay pile and a water trough to make it a home.
+	U.mesh_box(_park, Vector3(1.4, 0.5, 1.0), Vector3(-34.6, 0.25, -33.6), Color(1.0, 0.85, 0.2))
+	U.mesh_box(_park, Vector3(1.6, 0.35, 0.7), Vector3(-23.6, 0.18, -24.2), Color(0.35, 0.7, 1.0))
+	_zoo.append(_zoo_horse(ZOO_HORSE_HOME, -0.6))
+	_zoo.append(_zoo_rabbit(Vector3(-26, 0, -25.8), 2.6))
+	_zoo.append(_zoo_cat(Vector3(-33, 0, -25.2), 0.7))
+	_zoo.append(_zoo_dino(Vector3(-26.5, 0, -32.2), -2.2))
+
+
+func _zoo_entry(root: Node3D, kind: String, yaw: float) -> Dictionary:
+	root.rotation.y = yaw
+	_park.add_child(root)
+	return {"root": root, "kind": kind, "tail": null, "head": null, "food": null,
+		"phase": randf() * 6.0, "play_t": 0.0, "feed_t": 0.0, "home_yaw": yaw}
+
+
+func _zoo_horse(pos: Vector3, yaw: float) -> Dictionary:
+	var root := Node3D.new()
+	root.position = pos
+	var brown := Color(0.55, 0.38, 0.22)
+	var dark := Color(0.3, 0.2, 0.12)
+	U.mesh_box(root, Vector3(1.5, 0.62, 0.55), Vector3(0, 1.02, 0), brown)
+	var neck := Node3D.new()
+	neck.position = Vector3(0.72, 1.24, 0)
+	neck.rotation.z = -0.55
+	root.add_child(neck)
+	U.mesh_box(neck, Vector3(0.3, 0.66, 0.3), Vector3(0, 0.28, 0), brown)
+	U.mesh_box(neck, Vector3(0.1, 0.6, 0.34), Vector3(-0.14, 0.28, 0), dark)
+	var head := Node3D.new()
+	head.position = Vector3(1.02, 1.66, 0)
+	root.add_child(head)
+	U.mesh_box(head, Vector3(0.56, 0.28, 0.28), Vector3(0, 0, 0), brown)
+	U.mesh_box(head, Vector3(0.24, 0.2, 0.22), Vector3(0.36, -0.05, 0), brown.lightened(0.12))
+	U.mesh_box(head, Vector3(0.08, 0.16, 0.05), Vector3(-0.16, 0.2, -0.1), brown)
+	U.mesh_box(head, Vector3(0.08, 0.16, 0.05), Vector3(-0.16, 0.2, 0.1), brown)
+	for sx in [-1.0, 1.0]:
+		for sz in [-1.0, 1.0]:
+			U.mesh_cylinder(root, 0.07, 0.72, Vector3(0.55 * sx, 0.36, 0.18 * sz), brown.darkened(0.15))
+	var tail := Node3D.new()
+	tail.position = Vector3(-0.76, 1.24, 0)
+	root.add_child(tail)
+	U.mesh_box(tail, Vector3(0.12, 0.6, 0.12), Vector3(0, -0.28, 0), dark)
+	var food := _zoo_sphere(root, 0.11, Vector3(1.5, 0.11, 0), Color(0.9, 0.2, 0.2))
+	food.visible = false
+	_zoo_sign(root, "Kuda", 2.35)
+	var e := _zoo_entry(root, "kuda", yaw)
+	e["tail"] = tail
+	e["head"] = head
+	e["food"] = food
+	return e
+
+
+func _zoo_rabbit(pos: Vector3, yaw: float) -> Dictionary:
+	var root := Node3D.new()
+	root.position = pos
+	var fur := Color(0.92, 0.92, 0.95)
+	var body := _zoo_sphere(root, 0.3, Vector3(0, 0.3, 0), fur)
+	body.scale = Vector3(1.15, 0.9, 0.9)
+	_zoo_sphere(root, 0.2, Vector3(0.3, 0.52, 0), fur)
+	_zoo_sphere(root, 0.09, Vector3(-0.36, 0.38, 0), Color(1, 1, 1))
+	for sz in [-1.0, 1.0]:
+		var ear := Node3D.new()
+		ear.position = Vector3(0.26, 0.68, 0.08 * sz)
+		ear.rotation.z = -0.15
+		root.add_child(ear)
+		U.mesh_box(ear, Vector3(0.07, 0.36, 0.03), Vector3(0, 0.18, 0), fur)
+	var food := Node3D.new()
+	food.position = Vector3(0.6, 0.1, 0)
+	food.rotation.z = -1.2
+	root.add_child(food)
+	var cone := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = 0.0
+	cm.bottom_radius = 0.07
+	cm.height = 0.28
+	cone.mesh = cm
+	cone.material_override = U.mat(Color(1.0, 0.55, 0.15))
+	food.add_child(cone)
+	U.mesh_box(food, Vector3(0.05, 0.14, 0.05), Vector3(0, 0.2, 0), Color(0.35, 0.75, 0.35))
+	food.visible = false
+	_zoo_sign(root, "Kelinci", 1.45)
+	var e := _zoo_entry(root, "kelinci", yaw)
+	e["food"] = food
+	return e
+
+
+func _zoo_cat(pos: Vector3, yaw: float) -> Dictionary:
+	var root := Node3D.new()
+	root.position = pos
+	var fur := Color(0.95, 0.6, 0.2)
+	U.mesh_box(root, Vector3(0.55, 0.3, 0.28), Vector3(0, 0.34, 0), fur)
+	U.mesh_box(root, Vector3(0.3, 0.28, 0.28), Vector3(0.36, 0.5, 0), fur)
+	for sz in [-1.0, 1.0]:
+		U.mesh_box(root, Vector3(0.09, 0.15, 0.04), Vector3(0.32, 0.7, 0.08 * sz), fur)
+		U.mesh_cylinder(root, 0.045, 0.22, Vector3(0.2, 0.11, 0.09 * sz), fur.darkened(0.1))
+		U.mesh_cylinder(root, 0.045, 0.22, Vector3(-0.2, 0.11, 0.09 * sz), fur.darkened(0.1))
+	var tail := Node3D.new()
+	tail.position = Vector3(-0.3, 0.42, 0)
+	root.add_child(tail)
+	var tail_mesh := U.mesh_box(tail, Vector3(0.42, 0.06, 0.06), Vector3(-0.18, 0.1, 0), fur)
+	tail_mesh.rotation.z = 0.5
+	var food := Node3D.new()
+	food.position = Vector3(0.62, 0.08, 0)
+	root.add_child(food)
+	U.mesh_box(food, Vector3(0.3, 0.09, 0.13), Vector3(0, 0, 0), Color(0.6, 0.75, 0.85))
+	U.mesh_box(food, Vector3(0.12, 0.16, 0.02), Vector3(-0.2, 0, 0), Color(0.6, 0.75, 0.85))
+	food.visible = false
+	_zoo_sign(root, "Kucing", 1.25)
+	var e := _zoo_entry(root, "kucing", yaw)
+	e["tail"] = tail
+	e["food"] = food
+	return e
+
+
+func _zoo_dino(pos: Vector3, yaw: float) -> Dictionary:
+	var root := Node3D.new()
+	root.position = pos
+	var skin := Color(0.35, 0.7, 0.35)
+	U.mesh_box(root, Vector3(1.15, 0.62, 0.52), Vector3(0, 0.66, 0), skin)
+	for i in 3:
+		var plate := U.mesh_box(root, Vector3(0.1, 0.2, 0.3), Vector3(-0.3 + i * 0.3, 1.06, 0), skin.darkened(0.25))
+		plate.rotation.z = 0.3
+	var neck := Node3D.new()
+	neck.position = Vector3(0.55, 0.92, 0)
+	neck.rotation.z = -0.5
+	root.add_child(neck)
+	U.mesh_box(neck, Vector3(0.26, 0.55, 0.26), Vector3(0, 0.24, 0), skin)
+	var head := Node3D.new()
+	head.position = Vector3(0.88, 1.34, 0)
+	root.add_child(head)
+	U.mesh_box(head, Vector3(0.44, 0.24, 0.26), Vector3(0, 0, 0), skin)
+	U.mesh_box(head, Vector3(0.2, 0.16, 0.2), Vector3(0.28, -0.04, 0), skin.lightened(0.12))
+	var tail_mesh := U.mesh_box(root, Vector3(0.85, 0.16, 0.16), Vector3(-0.95, 0.6, 0), skin.darkened(0.1))
+	tail_mesh.rotation.z = 0.25
+	for sx in [-1.0, 1.0]:
+		for sz in [-1.0, 1.0]:
+			U.mesh_cylinder(root, 0.09, 0.36, Vector3(0.38 * sx, 0.18, 0.17 * sz), skin.darkened(0.12))
+	var food := Node3D.new()
+	food.position = Vector3(1.2, 0.05, 0)
+	root.add_child(food)
+	U.mesh_box(food, Vector3(0.36, 0.04, 0.26), Vector3(0, 0, 0), Color(0.45, 0.85, 0.4))
+	food.visible = false
+	_zoo_sign(root, "Dino", 2.0)
+	var e := _zoo_entry(root, "dino", yaw)
+	e["head"] = head
+	e["food"] = food
+	return e
+
+
+func _zoo_process(delta: float) -> void:
+	var t := Time.get_ticks_msec() * 0.001
+	for a in _zoo:
+		var root: Node3D = a["root"]
+		var phase: float = a["phase"]
+		match a["kind"]:
+			"kelinci":
+				root.position.y = pow(maxf(sin(t * 2.4 + phase), 0.0), 6.0) * 0.3
+			"kuda":
+				if a["tail"]:
+					a["tail"].rotation.x = sin(t * 2.2 + phase) * 0.35
+				if a["head"]:
+					a["head"].rotation.z = sin(t * 0.9 + phase) * 0.07
+			"kucing":
+				if a["tail"]:
+					a["tail"].rotation.y = sin(t * 3.0 + phase) * 0.4
+			"dino":
+				if a["head"]:
+					a["head"].rotation.y = sin(t * 0.7 + phase) * 0.25
+		if float(a["feed_t"]) > 0.0:
+			a["feed_t"] = float(a["feed_t"]) - delta
+			if a["kind"] != "kelinci":
+				root.position.y = absf(sin(t * 14.0)) * 0.05
+			if float(a["feed_t"]) <= 0.0 and a["food"]:
+				a["food"].visible = false
+		if float(a["play_t"]) > 0.0:
+			a["play_t"] = float(a["play_t"]) - delta
+			var prog := 1.0 - maxf(float(a["play_t"]), 0.0) / 1.2
+			match a["kind"]:
+				"kelinci":
+					root.position.y += absf(sin(prog * PI * 3.0)) * 0.45
+				"kucing":
+					root.rotation.y += delta * 7.0
+				"kuda":
+					root.rotation.z = -0.4 * sin(prog * PI)
+				"dino":
+					if a["head"]:
+						a["head"].rotation.z = -0.35 * sin(prog * PI)
+			if float(a["play_t"]) <= 0.0:
+				root.rotation.z = 0.0
+				root.rotation.y = float(a["home_yaw"])
+				if a["head"]:
+					a["head"].rotation.z = 0.0
+	# Who are you standing by? Their buttons follow.
+	_zoo_near = {}
+	if not _riding:
+		var best := 2.1
+		for a in _zoo:
+			var root: Node3D = a["root"]
+			var d := Vector2(_player.global_position.x - root.position.x,
+				_player.global_position.z - root.position.z).length()
+			if d < best:
+				best = d
+				_zoo_near = a
+	if _zoo_feed_button:
+		_zoo_feed_button.visible = not _zoo_near.is_empty()
+		_zoo_play_button.visible = not _zoo_near.is_empty()
+		_zoo_ride_button.visible = _riding or (not _zoo_near.is_empty() and _zoo_near["kind"] == "kuda")
+		_zoo_ride_button.text = "Turun" if _riding else "Naik Kuda"
+	if _riding and _race_state != 1:
+		_player.move_scale = 1.3
+
+
+func _zoo_feed(a: Dictionary) -> void:
+	if a.is_empty():
+		return
+	if a["food"]:
+		a["food"].visible = true
+	a["feed_t"] = 1.4
+	_sound.play("checkpoint", -3.0)
+	U.confetti(self, a["root"].position + Vector3(0, 1.2, 0), 16, HEART_COLORS)
+
+
+func _zoo_play(a: Dictionary) -> void:
+	if a.is_empty():
+		return
+	a["play_t"] = 1.2
+	_sound.play("boing", -3.0)
+	U.confetti(self, a["root"].position + Vector3(0, 1.2, 0), 12, RAINBOW)
+
+
+func _horse_animal() -> Dictionary:
+	for a in _zoo:
+		if a["kind"] == "kuda":
+			return a
+	return {}
+
+
+func _start_riding() -> void:
+	if _zoo_near.is_empty() or _zoo_near["kind"] != "kuda":
+		return
+	_riding = true
+	_player.set_mount(true)
+	_horse_animal()["root"].visible = false
+	_on_profile_changed(_player.profile_dict())
+
+
+func _stop_riding(to_pen := false) -> void:
+	if not _riding:
+		return
+	_riding = false
+	_player.set_mount(false)
+	var horse := _horse_animal()
+	if not horse.is_empty():
+		if to_pen:
+			horse["root"].position = ZOO_HORSE_HOME
+		else:
+			horse["root"].position = Vector3(_player.global_position.x, 0, _player.global_position.z)
+		horse["root"].visible = true
+	_player.move_scale = 0.0 if _race_state == 1 else 1.0
+	_on_profile_changed(_player.profile_dict())
+
+
 ## --- The learning games: Hijaiyah Adventure and Wudhu Challenge ---
 
 ## Stop both games and hide their signs.
@@ -861,6 +1283,9 @@ func _cancel_games() -> void:
 	if _game_sub:
 		_game_sub.visible = false
 	_game_clear_timer = 0.0
+	_hij_scores.clear()
+	if _menu:
+		_menu.set_game_running("")
 
 
 func _games_process(delta: float) -> void:
@@ -883,11 +1308,28 @@ func _games_process(delta: float) -> void:
 			elif flat < 1.25 and tok["armed"] and _hij_cooldown <= 0.0:
 				tok["armed"] = false
 				if tok["letter"] == target:
-					_hij_found(root)
+					if _net_active:
+						rpc("_hij_found_rpc", _hij_pos)
+					else:
+						_hij_found_rpc(_hij_pos)
 				else:
 					_sound.play("boing", -4.0)
 					_game_sub.text = "Bukan yang ini. Cari huruf: " + target
 					_hij_cooldown = 0.8
+	_wudhu_since_press += delta
+	if _wudhu_warn > 0.0:
+		_wudhu_warn -= delta
+		if _wudhu_warn <= 0.0 and _wudhu_active:
+			_game_sub.text = _wudhu_sub_text()
+	if _wudhu_active:
+		# The washing place may not be left until the order is finished:
+		# stepping too far simply puts you back at its edge.
+		var flat := Vector2(_player.global_position.x - WUDHU_POS.x,
+			_player.global_position.z - WUDHU_POS.z)
+		if flat.length() > WUDHU_AREA_R:
+			var clamped := flat.normalized() * WUDHU_AREA_R
+			_player.global_position.x = WUDHU_POS.x + clamped.x
+			_player.global_position.z = WUDHU_POS.z + clamped.y
 	if _wudhu_active and _wudhu_marker:
 		var step: Dictionary = WUDHU_STEPS[_wudhu_step]
 		_wudhu_marker.global_position = _player.global_position + step["part"]
@@ -922,18 +1364,53 @@ func _build_hijaiyah_tokens() -> void:
 ## around the park and walking into the matching one finds it. All 28
 ## letters come by, in a shuffled order.
 func start_hijaiyah() -> void:
+	if _wudhu_active:
+		return
 	if _active:
 		_go_home()
 	_stop_race()
 	_cancel_games()
-	_hij_order.clear()
+	var order: Array[int] = []
 	for i in HIJAIYAH.size():
-		_hij_order.append(i)
-	_hij_order.shuffle()
+		order.append(i)
+	order.shuffle()
+	if _net_active:
+		rpc("_hij_begin", order)
+	else:
+		_hij_begin(order)
+
+
+## The hunt begins on every phone with the same shuffled letter order, so
+## the boards and the target match everywhere; each player's finds are
+## counted on the shared score line.
+@rpc("any_peer", "reliable", "call_local")
+func _hij_begin(order: Array) -> void:
+	_stop_race()
+	_cancel_games()
+	_hij_order.clear()
+	for v in order:
+		_hij_order.append(int(v))
+	_hij_scores.clear()
+	_hij_names.clear()
+	for id in _race_ids():
+		_hij_scores[id] = 0
+		_hij_names[id] = _name_for_id(id)
 	_hij_pos = 0
 	_hij_cooldown = 0.0
 	_hij_active = true
+	_menu.set_game_running("Hijaiyah Adventure")
 	_hij_round()
+
+
+func _hij_hud_text() -> String:
+	var line := "Ditemukan: %d dari %d" % [_hij_pos, HIJAIYAH.size()]
+	if _hij_scores.size() > 1:
+		var parts: Array[String] = []
+		for id in _hij_scores:
+			var nm := "Kamu" if id == _my_id() else str(_hij_names.get(id, "Pemain"))
+			parts.append("%s: %d" % [nm, int(_hij_scores[id])])
+		line += "\n" + " • ".join(parts)
+	return line
 
 
 func _hij_round() -> void:
@@ -943,10 +1420,13 @@ func _hij_round() -> void:
 			tok["root"].visible = false
 		_game_label.text = "Hebat! Semua huruf hijaiyah ditemukan!"
 		_game_sub.text = "Kamu sudah mengenal 28 huruf hijaiyah."
+		if _hij_scores.size() > 1:
+			_game_sub.text = _hij_hud_text().replace("Ditemukan:", "Skor akhir — ditemukan:")
 		_game_label.visible = true
 		_game_sub.visible = true
 		_sound.play("fanfare")
 		_game_clear_timer = 6.0
+		_menu.set_game_running("")
 		return
 	var target: String = HIJAIYAH[_hij_order[_hij_pos]]
 	var letters: Array[String] = [target]
@@ -956,26 +1436,44 @@ func _hij_round() -> void:
 		if not letters.has(cand):
 			letters.append(cand)
 		k += 1
-	letters.shuffle()
 	var start := (_hij_pos * 3) % HIJ_SPOTS.size()
 	for j in _hij_tokens.size():
 		var tok := _hij_tokens[j]
-		tok["letter"] = letters[j]
+		# The arrangement turns with the round number instead of shuffling,
+		# so every phone in a group game shows the same boards.
+		var letter: String = letters[(j + _hij_pos) % letters.size()]
+		tok["letter"] = letter
 		# Boards arm once the player is a few steps away, so the board you
 		# just found cannot fire again while you still stand on its spot.
 		tok["armed"] = false
-		tok["label"].text = letters[j]
+		tok["label"].text = letter
 		tok["root"].position = HIJ_SPOTS[(start + j * 3) % HIJ_SPOTS.size()]
 		tok["root"].visible = true
 	_game_label.text = "Cari huruf: " + target
-	_game_sub.text = "Ditemukan: %d dari %d" % [_hij_pos, HIJAIYAH.size()]
+	_game_sub.text = _hij_hud_text()
 	_game_label.visible = true
 	_game_sub.visible = true
 
 
-func _hij_found(root: Node3D) -> void:
+## A find counts for the finder only, and the hunt moves on for everyone.
+## The round number rides along so a late or double call cannot count twice.
+@rpc("any_peer", "reliable", "call_local")
+func _hij_found_rpc(round_pos: int) -> void:
+	if not _hij_active or round_pos != _hij_pos:
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if sender == 0:
+		sender = _my_id()
+	if not _hij_scores.has(sender):
+		_hij_scores[sender] = 0
+		_hij_names[sender] = _name_for_id(sender)
+	_hij_scores[sender] = int(_hij_scores[sender]) + 1
+	var target: String = HIJAIYAH[_hij_order[_hij_pos]]
+	for tok in _hij_tokens:
+		if tok["letter"] == target:
+			U.confetti(self, tok["root"].position + Vector3(0, 1.6, 0), 30, RAINBOW)
+			break
 	_sound.play("checkpoint")
-	U.confetti(self, root.position + Vector3(0, 1.6, 0), 30, RAINBOW)
 	_hij_pos += 1
 	_hij_cooldown = 0.6
 	_hij_round()
@@ -997,6 +1495,8 @@ func _build_wudhu_station() -> void:
 ## the big button for every wash. The blue marker shows which part is next,
 ## so the order is learned by doing it.
 func start_wudhu() -> void:
+	if _hij_active:
+		return
 	if _active:
 		_go_home()
 	_stop_race()
@@ -1004,18 +1504,29 @@ func start_wudhu() -> void:
 	_wudhu_active = true
 	_wudhu_step = 0
 	_wudhu_presses = 0
+	_wudhu_since_press = WUDHU_PRESS_GAP
+	_wudhu_warn = 0.0
 	_player.teleport(WUDHU_POS + Vector3(0, 0.1, 0))
 	_player.look_toward(Vector3(0, 0, 1))
 	_player._model.rotation.y = 0.0
 	_wudhu_button.visible = true
 	_wudhu_marker.visible = true
+	_menu.set_game_running("Wudhu Challenge")
 	_wudhu_show_step()
+
+
+func _wudhu_sub_text() -> String:
+	if _wudhu_presses > 0:
+		var step: Dictionary = WUDHU_STEPS[_wudhu_step]
+		return "Langkah %d dari %d — lagi %d kali" % [
+			_wudhu_step + 1, WUDHU_STEPS.size(), int(step["times"]) - _wudhu_presses]
+	return "Langkah %d dari %d" % [_wudhu_step + 1, WUDHU_STEPS.size()]
 
 
 func _wudhu_show_step() -> void:
 	var step: Dictionary = WUDHU_STEPS[_wudhu_step]
 	_game_label.text = "Wudhu: " + str(step["name"])
-	_game_sub.text = "Langkah %d dari %d" % [_wudhu_step + 1, WUDHU_STEPS.size()]
+	_game_sub.text = _wudhu_sub_text()
 	_game_label.visible = true
 	_game_sub.visible = true
 	_wudhu_button.text = str(step["btn"])
@@ -1024,6 +1535,14 @@ func _wudhu_show_step() -> void:
 func _on_wudhu_press() -> void:
 	if not _wudhu_active:
 		return
+	if _wudhu_since_press < WUDHU_PRESS_GAP:
+		# Wudhu is not a race: a too-fast press is not counted, and the
+		# warning stays until it fades on its own.
+		_game_sub.text = "Pelan-pelan ya — jangan wudhu cepat-cepat."
+		_sound.play("sit", -4.0)
+		_wudhu_warn = 1.6
+		return
+	_wudhu_since_press = 0.0
 	var step: Dictionary = WUDHU_STEPS[_wudhu_step]
 	_wudhu_presses += 1
 	var part_pos: Vector3 = _player.global_position + step["part"]
@@ -1047,12 +1566,12 @@ func _on_wudhu_press() -> void:
 			_sound.play("fanfare")
 			U.confetti(self, _player.global_position + Vector3(0, 1.8, 0), 50, RAINBOW)
 			_game_clear_timer = 6.0
+			_menu.set_game_running("")
 		else:
 			_sound.play("checkpoint", -2.0)
 			_wudhu_show_step()
 	else:
-		_game_sub.text = "Langkah %d dari %d — lagi %d kali" % [
-			_wudhu_step + 1, WUDHU_STEPS.size(), int(step["times"]) - _wudhu_presses]
+		_game_sub.text = _wudhu_sub_text()
 
 
 func net_disconnect() -> void:
@@ -1078,6 +1597,7 @@ func _end_session(message: String) -> void:
 		_discovery.close()
 		_discovery = null
 	_stop_race()
+	_cancel_games()
 	for id in _puppets:
 		_puppets[id].queue_free()
 	_puppets.clear()
@@ -1259,6 +1779,9 @@ func _on_race_pressed() -> void:
 	if not _net_active:
 		_menu.set_net_status("Balap lari perlu teman: jadi tuan rumah atau gabung dulu.")
 		return
+	if _hij_active or _wudhu_active:
+		_menu.set_net_status("Sudahi dulu mini game yang sedang berjalan (menu Mini Game).")
+		return
 	rpc("_race_start")
 
 
@@ -1266,6 +1789,7 @@ func _on_race_pressed() -> void:
 func _race_start() -> void:
 	if _race_state != 0:
 		return
+	_cancel_games()
 	if _active:
 		_go_home()
 	var ids := _race_ids()

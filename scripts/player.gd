@@ -59,6 +59,12 @@ var move_scale := 1.0
 var fall_sound := "home"
 
 var _model: Node3D
+## Riding the zoo horse: the mount is a horse prop under the model and the
+## model sits up on its back. Synced to the other phones through the
+## profile ("mount"), so everyone sees who is riding.
+const MOUNT_LIFT := 0.92
+var mount := false
+var _mount_root: Node3D
 var _legs: Array[Node3D] = []
 var _arms: Array[Node3D] = []
 var _hat_root: Node3D
@@ -171,6 +177,7 @@ func profile_dict() -> Dictionary:
 		"skin": skin_color, "shirt": shirt_color,
 		"hair_style": hair_style, "hair_color": hair_color, "face": face_style,
 		"hijab": wear_hijab, "hijab_color": hijab_color, "hat": hat,
+		"mount": mount,
 	}
 
 
@@ -186,6 +193,8 @@ func apply_profile(d: Dictionary, save := false) -> void:
 	hijab_color = d.get("hijab_color", hijab_color)
 	refresh_appearance()
 	set_hat(str(d.get("hat", hat)), false)
+	if d.has("mount"):
+		set_mount(bool(d["mount"]))
 	if save:
 		_save_profile()
 
@@ -197,6 +206,7 @@ func refresh_appearance() -> void:
 	_legs.clear()
 	_arms.clear()
 	_build_model()
+	_model.position.y = MOUNT_LIFT if mount else 0.0
 	var worn := hat
 	hat = ""
 	set_hat(worn, false)
@@ -287,6 +297,47 @@ func teleport(pos: Vector3) -> void:
 func _sfx(sound_name: String, volume_db := 0.0, pitch := 1.0) -> void:
 	if sound:
 		sound.play(sound_name, volume_db, pitch)
+
+
+## Sit on (or climb off) the horse. The horse prop faces -Z like the model,
+## so it trots along wherever the model turns.
+func set_mount(on: bool) -> void:
+	mount = on
+	if on:
+		if _mount_root == null:
+			_mount_root = _build_mount_horse()
+			add_child(_mount_root)
+		_mount_root.visible = true
+	elif _mount_root:
+		_mount_root.visible = false
+	if _model:
+		_model.position.y = MOUNT_LIFT if on else 0.0
+
+
+func _build_mount_horse() -> Node3D:
+	var horse := Node3D.new()
+	var brown := Color(0.55, 0.38, 0.22)
+	var dark := Color(0.3, 0.2, 0.12)
+	U.mesh_box(horse, Vector3(0.56, 0.58, 1.6), Vector3(0, 0.8, 0), brown)
+	var neck := Node3D.new()
+	neck.position = Vector3(0, 1.02, -0.8)
+	neck.rotation.x = 0.6
+	horse.add_child(neck)
+	U.mesh_box(neck, Vector3(0.3, 0.62, 0.3), Vector3(0, 0.26, 0), brown)
+	U.mesh_box(neck, Vector3(0.34, 0.56, 0.1), Vector3(0, 0.28, 0.14), dark)
+	U.mesh_box(horse, Vector3(0.52, 0.26, 0.28), Vector3(0, 1.44, -1.12), brown)
+	U.mesh_box(horse, Vector3(0.3, 0.2, 0.22), Vector3(0, 1.36, -1.3), brown.lightened(0.12))
+	U.mesh_box(horse, Vector3(0.09, 0.18, 0.05), Vector3(-0.14, 1.62, -1.04), brown)
+	U.mesh_box(horse, Vector3(0.09, 0.18, 0.05), Vector3(0.14, 1.62, -1.04), brown)
+	for sx in [-1.0, 1.0]:
+		for sz in [-1.0, 1.0]:
+			U.mesh_cylinder(horse, 0.06, 0.55, Vector3(0.19 * sx, 0.28, 0.58 * sz), brown.darkened(0.15))
+	var tail := Node3D.new()
+	tail.position = Vector3(0, 1.05, 0.8)
+	tail.rotation.x = -0.5
+	horse.add_child(tail)
+	U.mesh_box(tail, Vector3(0.12, 0.55, 0.12), Vector3(0, -0.26, 0), dark)
+	return horse
 
 
 func _build_model() -> void:

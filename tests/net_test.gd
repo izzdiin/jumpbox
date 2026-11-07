@@ -96,6 +96,15 @@ func _initialize():
 	# only the matching board counts.
 	main.start_hijaiyah()
 	_check(main._hij_active and main._hij_order.size() == 28, "hijaiyah adventure covers 28 letters")
+	var letters_before: Array = []
+	for tok in main._hij_tokens:
+		letters_before.append(tok["letter"])
+	main._hij_begin(main._hij_order)
+	var same_boards := true
+	for j in main._hij_tokens.size():
+		if main._hij_tokens[j]["letter"] != letters_before[j]:
+			same_boards = false
+	_check(same_boards and main._hij_pos == 0, "shared order makes the same boards")
 	var target_letter: String = main.HIJAIYAH[main._hij_order[main._hij_pos]]
 	var target_root: Node3D = null
 	var wrong_root: Node3D = null
@@ -111,18 +120,49 @@ func _initialize():
 	player.teleport(target_root.position + Vector3(0, 0.1, 0))
 	await create_timer(0.3).timeout
 	_check(main._hij_pos == 1, "finding the letter counts")
+	main._hij_found_rpc(1)
+	_check(main._hij_pos == 2 and int(main._hij_scores.get(0, 0)) == 2, "a reported find scores and moves on")
+	main._hij_found_rpc(1)
+	_check(main._hij_pos == 2, "a stale find cannot count twice")
 	main._cancel_games()
 	_check(not main._hij_active, "hijaiyah adventure stops")
 
-	# Wudhu Challenge: the big button walks the whole washing order.
+	# Wudhu Challenge: slow presses walk the whole washing order; a fast
+	# press is warned and not counted, and the place cannot be left.
 	main.start_wudhu()
 	_check(main._wudhu_active and main._wudhu_step == 0, "wudhu challenge starts at niat")
 	_check(main._wudhu_button.visible and main._wudhu_marker.visible, "wudhu button and marker show")
-	var presses := 0
-	while main._wudhu_active and presses < 40:
+	main._on_wudhu_press()
+	_check(main._wudhu_step == 1, "niat counts")
+	main._on_wudhu_press()
+	_check(main._wudhu_step == 1 and main._wudhu_presses == 0
+		and main._game_sub.text.contains("cepat-cepat"), "a too-fast press is warned, not counted")
+	player.teleport(main.WUDHU_POS + Vector3(9, 0.1, 0))
+	await create_timer(0.25).timeout
+	_check(Vector2(player.global_position.x - main.WUDHU_POS.x,
+		player.global_position.z - main.WUDHU_POS.z).length() <= 2.7,
+		"the washing place cannot be left mid-wudhu")
+	var counted := 1
+	while main._wudhu_active and counted < 40:
+		main._wudhu_since_press = 99.0
 		main._on_wudhu_press()
-		presses += 1
-	_check(presses == 28 and not main._wudhu_active, "wudhu order completes in 28 presses")
+		counted += 1
+	_check(counted == 28 and not main._wudhu_active, "wudhu order completes in 28 slow presses")
 	_check(main._game_label.text.contains("Wudhu selesai"), "wudhu finish is celebrated")
+
+	# The mini zoo: four animals to feed and play with, and a horse to ride.
+	_check(main._zoo.size() == 4, "zoo has four animals")
+	var horse := main._horse_animal()
+	player.teleport(horse["root"].position + Vector3(1.5, 0.1, 0))
+	await create_timer(0.25).timeout
+	_check(main._zoo_near.get("kind") == "kuda", "standing by the horse offers its buttons")
+	main._zoo_feed(main._zoo_near)
+	_check(float(main._zoo_near["feed_t"]) > 0.0 and main._zoo_near["food"].visible, "feeding shows the food")
+	main._zoo_play(main._zoo_near)
+	_check(float(main._zoo_near["play_t"]) > 0.0, "playing starts the trick")
+	main._start_riding()
+	_check(main._riding and player.mount and not horse["root"].visible, "riding hides the pen horse and mounts up")
+	main._stop_riding()
+	_check(not main._riding and not player.mount and horse["root"].visible, "climbing off brings the horse back")
 	print("RESULT: %s" % ("PASS" if _fails == 0 else "FAIL (%d)" % _fails))
 	quit(0 if _fails == 0 else 1)

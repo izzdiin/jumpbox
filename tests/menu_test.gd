@@ -40,10 +40,17 @@ func _initialize():
 		"about shows the per-version changelog")
 	_check(not about_text.contains("Main tanpa internet") and not about_text.contains("Threads"),
 		"about dropped the old credit lines")
+	_check(menu._about_scroll != null and menu._about_scroll.get_child_count() == 1,
+		"about changelog sits in a scroller")
 	_find_button(menu._about_box, "Kembali").pressed.emit()
 	_check(menu._main_box.visible, "back to the menu")
 	_find_button(menu._main_box, "Mini Game").pressed.emit()
 	_check(menu._games_box.visible and not menu._main_box.visible, "mini game page shows")
+	menu.set_game_running("Hijaiyah Adventure")
+	_check(menu._end_game_button.visible and menu._game_status.text.contains("Hijaiyah"),
+		"running game shows with its end button")
+	menu.set_game_running("")
+	_check(not menu._end_game_button.visible, "end button hides when no game runs")
 	_find_button(menu._games_box, "Kembali").pressed.emit()
 	_check(menu._main_box.visible, "back from mini games")
 	_find_button(menu._main_box, "Main lagi").pressed.emit()

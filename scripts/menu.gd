@@ -28,6 +28,9 @@ signal scan_pressed
 signal race_pressed
 signal hijaiyah_pressed
 signal wudhu_pressed
+signal end_game_pressed
+signal opened
+signal closed
 signal profile_changed(profile: Dictionary)
 
 var _main_box: VBoxContainer
@@ -35,6 +38,11 @@ var _about_box: VBoxContainer
 var _char_box: VBoxContainer
 var _net_box: VBoxContainer
 var _games_box: VBoxContainer
+## The About changelog scroller (the one page allowed to scroll) and the
+## mini-game page's running-game status with its end button.
+var _about_scroll: ScrollContainer
+var _game_status: Label
+var _end_game_button: Button
 
 ## The character being edited (a player.gd profile_dict). Set from main.gd;
 ## every change goes back up through profile_changed so main can apply it to
@@ -107,7 +115,13 @@ func _ready() -> void:
 	_about_box = _page(pages)
 	_about_box.add_theme_constant_override("separation", 8)
 	_label(_about_box, "Tentang", 36)
-	_label(_about_box, "Log Perubahan\n\nYusuf (pembuat asli):\n0.4 Arena langit lebih lebar, nomor versi\n0.5 Arena lava & pintu pelangi berikon\n0.6 Lima topi pilihan di awal\n0.7 Pintu arena dipindah dari wahana\n0.8 Seluncur spiral raksasa\n0.9 Perbaikan seret kamera\n0.10 Taman air\n0.11 Suara langkah dihapus\n0.12 Pelampung & bebek apung\n0.13 Menu Tentang & Keluar\n0.14-0.16 Halaman Tentang\n0.17 Soft play indoor\n\niz_ddin (modifikasi):\n0.18 Main berdua WiFi & karakter\n0.19 Cari tuan rumah & Balap Lari\n0.20 Awal langsung buat karakter, tanpa scroll\n0.21 Arena balap coin & pratinjau karakter\n0.22 Hijaiyah Adventure & Wudhu Challenge", 15)
+	# The changelog only grows, so this one page scrolls (drag it).
+	_about_scroll = ScrollContainer.new()
+	_about_scroll.custom_minimum_size = Vector2(560, 452)
+	_about_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_about_box.add_child(_about_scroll)
+	var log_label := _label(_about_scroll, "Log Perubahan\n\nYusuf (pembuat asli):\n0.4 Arena langit lebih lebar, nomor versi\n0.5 Arena lava & pintu pelangi berikon\n0.6 Lima topi pilihan di awal\n0.7 Pintu arena dipindah dari wahana\n0.8 Seluncur spiral raksasa\n0.9 Perbaikan seret kamera\n0.10 Taman air\n0.11 Suara langkah dihapus\n0.12 Pelampung & bebek apung\n0.13 Menu Tentang & Keluar\n0.14-0.16 Halaman Tentang\n0.17 Soft play indoor\n\niz_ddin (modifikasi):\n0.18 Main berdua WiFi & karakter\n0.19 Cari tuan rumah & Balap Lari\n0.20 Awal langsung buat karakter, tanpa scroll\n0.21 Arena balap coin & pratinjau karakter\n0.22 Hijaiyah Adventure & Wudhu Challenge\n0.23 Tentang bergeser, wudhu pelan-pelan, hijaiyah bersama & mini zoo", 16)
+	log_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_label(_about_box, "Dibuat dengan Godot Engine (lisensi MIT).", 18)
 	_button(_about_box, "Kembali", BLUE, _show_main, Vector2(512, 68), 30)
 
@@ -278,14 +292,29 @@ func _build_games_page(pages: VBoxContainer) -> void:
 	_button(games_grid, "Wudhu\nChallenge", BLUE, func():
 		wudhu_pressed.emit()
 		close(), Vector2(250, 92), 26)
+	_game_status = _label(_games_box, "", 22)
+	_game_status.visible = false
+	_end_game_button = _button(_games_box, "Sudahi Game", RED, func(): end_game_pressed.emit(), Vector2(512, 68), 30)
+	_end_game_button.visible = false
 	_label(_games_box, "Balap Lari ada di halaman Main Berdua.", 20)
 	_button(_games_box, "Kembali", BLUE, _show_main, Vector2(512, 68), 30)
+
+
+## Called from main.gd: while a mini game runs, the page says so and offers
+## the deliberate way out, so games are never ended by accident.
+func set_game_running(text: String) -> void:
+	if _game_status == null:
+		return
+	_game_status.text = "Sedang berjalan: " + text if text != "" else ""
+	_game_status.visible = text != ""
+	_end_game_button.visible = text != ""
 
 
 func open() -> void:
 	_show_main()
 	visible = true
 	get_tree().paused = true
+	opened.emit()
 
 
 ## First run: land on the character page so the kid makes their character
@@ -295,11 +324,13 @@ func open_onboarding() -> void:
 	_show_char()
 	visible = true
 	get_tree().paused = true
+	opened.emit()
 
 
 func close() -> void:
 	visible = false
 	get_tree().paused = false
+	closed.emit()
 
 
 ## Called from main.gd with the player's current look.
